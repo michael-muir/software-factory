@@ -95,7 +95,10 @@ def gate_repo(
     for rel, text in (files or {}).items():
         (root / rel).parent.mkdir(parents=True, exist_ok=True)
         (root / rel).write_text(text, encoding="utf-8")
-    (root / ".gitignore").write_text("ran-*.txt\n", encoding="utf-8")
+    gitignore = root / ".gitignore"
+    existing = gitignore.read_text(encoding="utf-8") if gitignore.is_file() else ""
+    if "ran-*.txt" not in existing.splitlines():
+        gitignore.write_text(existing + "ran-*.txt\n", encoding="utf-8")
     git(root, "add", "-A")
     git(root, "commit", "-q", "-m", "fixture")
     return root
