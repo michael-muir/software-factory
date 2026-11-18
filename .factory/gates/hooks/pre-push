@@ -1,0 +1,11 @@
+#!/bin/sh
+# Software Factory pre-push hook (E07). Bypass once with: git push --no-verify
+# Finds a Python 3.11+ (python3 can be the Windows Store stub) and hands over to run_hook.py.
+for py in python3 python py; do
+  if command -v "$py" >/dev/null 2>&1 &&
+     "$py" -c 'import sys; sys.exit(sys.version_info < (3, 11))' >/dev/null 2>&1; then
+    exec "$py" "$(git rev-parse --show-toplevel)/.factory/gates/hooks/run_hook.py" pre-push
+  fi
+done
+echo "factory hook: no Python 3.11+ found on PATH (tried python3, python, py)" >&2
+exit 1

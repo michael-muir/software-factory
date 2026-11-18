@@ -9,6 +9,8 @@ from pathlib import Path
 KIT_ROOT = Path(__file__).resolve().parent.parent / "kit"
 KIT_DIR = ".factory"  # kit-managed files, tracked in the manifest
 STATE_DIR = ".agentic"  # state seeds, created only when missing
+# Kit files written with mode 0o755 (E07 AC-04): the git hook shims.
+EXECUTABLE_FILES = frozenset({".factory/gates/hooks/pre-commit", ".factory/gates/hooks/pre-push"})
 
 
 @dataclass(frozen=True)
