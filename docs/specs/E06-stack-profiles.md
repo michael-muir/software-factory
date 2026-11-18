@@ -85,6 +85,7 @@ Give the E05 gate real work to do. Two profiles, Python and TS/JS, turn the gate
   - **`test-args`** (default `[]`): extra pytest arguments for the kill test, so a project can narrow it to fast tests. The command becomes `<interpreter> -m pytest -q -x <test-args>`.
 - **AC-06** `mutate_ts.py --min N FILE...` uses only the standard library and runs `npx --no-install stryker run` with the Vitest runner:
   - It mutates only the given files that are not tests, excluding `*.test.*`, `*.spec.*` and anything under `__tests__/`.
+  - It never mutates the installed kit under `.factory/`, or tool configuration files named `*.config.*` (`eslint.config.js`, `vitest.config.ts` and so on). *(Clarified 17 Nov 2026, product owner decision during T2: config files pulled the reference fixture's score down to 47%.)*
   - It reads the mutation score from Stryker's JSON report and exits 0 at or above N%, 1 below.
 - **AC-07** Both helpers:
   - exit 0 with the message "no source files to mutate" when every given file is a test

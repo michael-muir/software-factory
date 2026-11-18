@@ -123,6 +123,19 @@ def test_ts_js_profile_header_names_tools_ignores_and_how_to_run() -> None:
 
 
 @pytest.mark.ac("E06-AC-06")
+def test_tool_config_files_are_never_mutated() -> None:
+    given = [
+        "eslint.config.js",
+        "vitest.config.ts",
+        "vite.config.mjs",
+        "configs/stryker.config.cjs",
+        "src/config.ts",
+        "src/app.configure.ts",
+    ]
+    assert mutate_ts.select_sources(given) == ["src/config.ts", "src/app.configure.ts"]
+
+
+@pytest.mark.ac("E06-AC-06")
 def test_test_files_and_the_installed_kit_are_never_mutated() -> None:
     given = [
         "src/calc.ts",
