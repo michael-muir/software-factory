@@ -9,7 +9,9 @@
     ".factory/gates/gate.py": "795d8c3e81470a6f2b9f167e3bdde61faf1ee1ac0a3ac01eb2d8d2b49b6ced97",
     ".factory/gates/profiles/.gitkeep": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
     ".factory/gates/profiles/python.toml": "18207ec25a2a547a53ac8870d839e2f071399c065adb0b00c0c5472bc97b5e0f",
+    ".factory/gates/profiles/ts-js.toml": "16419b1ffea47a6667628919157d715b2abeffe46281878e5d85146ed69e4b56",
     ".factory/gates/tools/mutate_python.py": "e71a5f4151f80b45cd6e8b3fa16bfb6f13b1d67798e88d2e36b1ed874dc39a70",
+    ".factory/gates/tools/mutate_ts.py": "660a1026e3c05139f0a935ca4ddc74bc16eb9ae02cd4f37f86ec9f73e25a1ef5",
     ".factory/skills/.gitkeep": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
     ".factory/standards/.gitkeep": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
     ".factory/workflow/.gitkeep": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
