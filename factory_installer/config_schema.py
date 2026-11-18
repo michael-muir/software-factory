@@ -6,14 +6,11 @@ because the standard library cannot write TOML.
 
 from __future__ import annotations
 
-import re
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
 Check = Callable[[Any], str | None]
-
-_SEMVER = re.compile(r"^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$")
 
 _KIND_NAMES = {"int": "an integer", "number": "a number", "str": "a string", "bool": "a boolean"}
 
@@ -66,10 +63,6 @@ def _equals_one(value: Any) -> str | None:
     return None if value == 1 else "must be 1"
 
 
-def _semver(value: Any) -> str | None:
-    return None if _SEMVER.match(value) else "must be a semver version such as 0.1.0"
-
-
 def _not_empty(value: Any) -> str | None:
     return None if value.strip() else "must not be empty"
 
@@ -79,9 +72,6 @@ TOP_LEVEL: dict[str, Field] = {
 }
 
 SECTIONS: dict[str, dict[str, Field]] = {
-    "factory": {
-        "kit_version": Field("str", "0.1.0", _semver),
-    },
     "hosting": {
         "mode": Field("str", "local", _one_of("local", "cloud"), '"local" | "cloud"'),
     },

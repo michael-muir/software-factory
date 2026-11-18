@@ -59,9 +59,6 @@ Empty directories carry a `.gitkeep` so the layout survives a commit.
 ```toml
 schema_version = 1
 
-[factory]
-kit_version = "0.1.0"
-
 [hosting]
 mode = "local"                  # "local" | "cloud"
 
@@ -90,7 +87,6 @@ enabled = false
 | Key | Type | Rule |
 | --- | --- | --- |
 | `schema_version` | integer | must be 1 |
-| `factory.kit_version` | string | semver, e.g. `0.1.0` or `1.2.0-rc.1` |
 | `hosting.mode` | string | `local` or `cloud` |
 | `budgets.per_job_usd` | number | > 0, and ≤ `per_day_usd` |
 | `budgets.per_day_usd` | number | > 0 |
@@ -105,6 +101,7 @@ enabled = false
 - A number is an integer or a float, but never a boolean.
 - A key that is missing is allowed: its default applies, and `check` lists it as information while still exiting 0 (assumption 3).
 - An unknown key or unknown section is an error.
+- **Change, 17 Nov 2026:** `factory.kit_version` was removed from the config. Upgrades never rewrite `config.toml` (ADR 0003), so the value would go stale. The installed kit version lives only in `.factory/manifest.json`. A `[factory]` section is now an unknown section.
 
 ## Acceptance criteria
 

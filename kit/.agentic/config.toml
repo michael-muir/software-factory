@@ -3,9 +3,6 @@
 
 schema_version = 1
 
-[factory]
-kit_version = "0.1.0"
-
 [hosting]
 mode = "local"  # "local" | "cloud"
 
