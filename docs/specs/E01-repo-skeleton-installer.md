@@ -122,7 +122,7 @@ enabled = false
 **Existing repo and conflicts**
 
 - **AC-09** If a file it would write already exists, the installer leaves it byte-for-byte unchanged and lists it as skipped. The run still exits 0.
-- **AC-10** With `--force`, those files are overwritten and listed as overwritten.
+- **AC-10** With `--force`, conflicting kit files under `.factory/` are overwritten and listed as overwritten. State files under `.agentic/` are never overwritten, even with `--force`; they stay skipped (ADR 0003; product owner decision, 17 Nov 2026).
 - **AC-11** The final summary reports counts for created, skipped, overwritten, updated, kept and removed files.
 
 **Re-runs and upgrades**
