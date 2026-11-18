@@ -29,7 +29,7 @@ line-length = 100
 select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF"]
 
 [tool.ruff.lint.isort]
-known-first-party = ["factory_installer", "gate", "mutate_python", "mutate_ts", "run_hook", "tests"]
+known-first-party = ["factory_installer", "gate", "mutate_python", "mutate_ts", "run_hook", "state", "tests"]
 
 [tool.ruff.lint.per-file-ignores]
 # The launcher must parse on old Pythons (ADR 0002): no f-strings or annotations.
@@ -38,18 +38,19 @@ known-first-party = ["factory_installer", "gate", "mutate_python", "mutate_ts", 
 [tool.mypy]
 python_version = "3.11"
 strict = true
-mypy_path = "kit/.factory/gates,kit/.factory/gates/tools"
+mypy_path = "kit/.factory/gates,kit/.factory/gates/tools,kit/.factory/state"
 files = [
     "factory_installer",
     "tests",
     "kit/.factory/gates/gate.py",
     "kit/.factory/gates/tools",
     "kit/.factory/gates/hooks/run_hook.py",
+    "kit/.factory/state",
 ]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["kit/.factory/gates", "kit/.factory/gates/tools"]
+pythonpath = ["kit/.factory/gates", "kit/.factory/gates/tools", "kit/.factory/state"]
 addopts = "--strict-markers --ignore=tests/fixtures -n auto"
 markers = [
     "ac(id): acceptance criterion from a spec in docs/specs that this test covers",
@@ -61,7 +62,7 @@ xfail_strict = true
 branch = true
 # pytest-xdist workers are subprocesses; `coverage report` combines their data files.
 patch = ["subprocess"]
-source = ["factory_installer", "kit/.factory/gates"]
+source = ["factory_installer", "kit/.factory/gates", "kit/.factory/state"]
 
 [tool.software-factory.mutation]
 # Mutants tested per gate run (spec E06 AC-05b); the sample is deterministic.
