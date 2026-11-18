@@ -69,7 +69,7 @@ The gate gives the same verdict on a developer's machine, in a git hook and in C
   - prints a note that unstaged changes are included
   - blocks the commit when the gate exits non-zero
 - **AC-06** The pre-push hook runs `<python_command> .factory/gates/gate.py` from the repo root, the same gate command a pipeline runs, and blocks the push when the gate exits non-zero.
-- **AC-07** Each hook reads `config.toml` with a standard-library Python 3.11+ found on PATH. If none is found, the hook exits non-zero with a message saying so. If `config.toml` is invalid, it blocks with the same message `install.py check` gives.
+- **AC-07** Each hook reads `config.toml` with a standard-library Python 3.11+ found on PATH. If none is found, the hook exits non-zero with a message saying so. If `config.toml` is invalid, it blocks with the gate's config error naming the key. *(Clarified 18 Nov 2026 with the design: `install.py` isn't installed into target repos, so the hook uses the gate's own validation.)*
 - **AC-08** `python install.py hooks [path]`:
   - It sets `core.hooksPath` to `.factory/gates/hooks`.
   - Running it again changes nothing and reports that hooks are already on.
