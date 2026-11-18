@@ -1,0 +1,51 @@
+# Software Factory gate profile: TS/JS (E06)
+#
+# Tools, from the project's local node_modules: Prettier, ESLint, TypeScript (tsc), Vitest
+# with @vitest/coverage-v8, and Stryker (@stryker-mutator/core, @stryker-mutator/vitest-runner).
+# Each runs through `npx --no-install`, so nothing is downloaded on the fly.
+# Install them as devDependencies, then run the gate:
+#     python .factory/gates/gate.py
+#
+# The gate fails any check that changes the repo (ADR 0008), so git-ignore what the tools
+# write: node_modules/, dist/, coverage/, reports/, .stryker-tmp/
+#
+# The build check runs `npm run build` only if the project defines a build script.
+
+name = "ts-js"
+detect = ["package.json"]
+mutation_paths = ["*.ts", "*.tsx", "*.js", "*.jsx", "*.mjs", "*.cjs"]
+
+[checks.format]
+command = ["npx", "--no-install", "prettier", "--check", "."]
+
+[checks.lint]
+command = ["npx", "--no-install", "eslint", "."]
+
+[checks.types]
+command = ["npx", "--no-install", "tsc", "--noEmit"]
+
+[checks.build]
+command = ["npm", "run", "build", "--if-present"]
+
+[checks.tests]
+command = ["npx", "--no-install", "vitest", "run"]
+
+[checks.coverage]
+command = [
+    "npx",
+    "--no-install",
+    "vitest",
+    "run",
+    "--coverage",
+    "--coverage.thresholds.lines={coverage_percent}",
+]
+
+[checks.mutation]
+command = [
+    "python",
+    ".factory/gates/tools/mutate_ts.py",
+    "--min",
+    "{mutation_percent}",
+    "{changed_files}",
+]
+timeout_s = 1800

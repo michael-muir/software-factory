@@ -148,6 +148,7 @@ def test_kill_test_uses_the_pinned_interpreter() -> None:
     ]
 
 
+@pytest.mark.slow
 @pytest.mark.ac("E06-AC-05")
 def test_helper_works_with_no_python_on_path(tmp_path: Path) -> None:
     project = python_project(tmp_path / "p")
@@ -157,6 +158,7 @@ def test_helper_works_with_no_python_on_path(tmp_path: Path) -> None:
     assert result.returncode == 0, result.stdout + result.stderr
 
 
+@pytest.mark.slow
 @pytest.mark.ac("E06-AC-05")
 def test_helper_passes_strong_tests_and_fails_weak_ones(tmp_path: Path) -> None:
     strong = python_project(tmp_path / "strong")
@@ -201,6 +203,7 @@ def test_settings_default_and_read_from_pyproject(tmp_path: Path) -> None:
     ("snippet", "key"),
     [("max-mutants = 0", "max-mutants"), ("test-args = 'fast'", "test-args")],
 )
+@pytest.mark.slow
 def test_invalid_settings_exit_2_naming_the_key(tmp_path: Path, snippet: str, key: str) -> None:
     project = python_project(
         tmp_path / "p", extra_pyproject=f"[tool.software-factory.mutation]\n{snippet}\n"
@@ -210,6 +213,7 @@ def test_invalid_settings_exit_2_naming_the_key(tmp_path: Path, snippet: str, ke
     assert key in result.stdout + result.stderr
 
 
+@pytest.mark.slow
 @pytest.mark.ac("E06-AC-05b")
 def test_a_capped_run_says_how_many_were_sampled(tmp_path: Path) -> None:
     project = python_project(
@@ -223,6 +227,7 @@ def test_a_capped_run_says_how_many_were_sampled(tmp_path: Path) -> None:
 # --- AC-07: nothing to mutate, missing tools ----------------------------------------------------
 
 
+@pytest.mark.slow
 @pytest.mark.ac("E06-AC-07")
 def test_only_test_files_means_nothing_to_mutate(tmp_path: Path) -> None:
     project = python_project(tmp_path / "p")
@@ -231,6 +236,7 @@ def test_only_test_files_means_nothing_to_mutate(tmp_path: Path) -> None:
     assert "no source files to mutate" in result.stdout
 
 
+@pytest.mark.slow
 @pytest.mark.ac("E06-AC-07")
 def test_missing_cosmic_ray_exits_2_naming_it(tmp_path: Path) -> None:
     project = python_project(tmp_path / "p")
@@ -261,6 +267,7 @@ def _run_helper_without_site_packages(project: Path) -> subprocess.CompletedProc
 # --- AC-08: state outside the repo --------------------------------------------------------------
 
 
+@pytest.mark.slow
 @pytest.mark.ac("E06-AC-08")
 def test_helper_leaves_the_repo_and_its_temp_dir_clean(tmp_path: Path) -> None:
     project = python_project(tmp_path / "p")
@@ -282,6 +289,7 @@ def test_helper_leaves_the_repo_and_its_temp_dir_clean(tmp_path: Path) -> None:
 # --- AC-09 / AC-10: reference and seeds through the real gate -----------------------------------
 
 
+@pytest.mark.slow
 @pytest.mark.ac("E06-AC-09")
 def test_python_reference_passes_every_check(tmp_path: Path) -> None:
     code, report = run_gate(python_project(tmp_path / "ref"))
@@ -291,6 +299,7 @@ def test_python_reference_passes_every_check(tmp_path: Path) -> None:
     assert result == {c: ("n/a" if c == "build" else "pass") for c in CHECKS}, report
 
 
+@pytest.mark.slow
 @pytest.mark.ac("E06-AC-10")
 @pytest.mark.parametrize("check", sorted(PYTHON_SEEDS))
 def test_each_python_seed_fails_exactly_its_check(tmp_path: Path, check: str) -> None:

@@ -60,6 +60,10 @@ The tests assert two things for every seed: its check fails, and every other che
 - **Mutation inside fixtures is kept small:** the reference has about 10 to 20 mutants, and `max-mutants` doesn't kick in.
 - **Helper unit tests** check sampling determinism, file exclusion, exit codes and temp-dir cleanup without running a full mutation, by putting a fake `cosmic-ray` and fake `npx` on `PATH`.
 
+**Slow marker (added 17 Nov 2026, after T1):** tests that run real tools through the gate, or a real mutation run, are tagged `@pytest.mark.slow`.
+- **While working locally:** run `uv run pytest -m "not slow"`. After T1 that was 170 tests in about 28 s.
+- **Before a PR, and in CI (E07):** run everything.
+
 ## Vertical slices
 
 | Task | Slice | ACs |

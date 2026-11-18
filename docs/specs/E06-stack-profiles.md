@@ -85,6 +85,7 @@ Give the E05 gate real work to do. Two profiles, Python and TS/JS, turn the gate
   - **`test-args`** (default `[]`): extra pytest arguments for the kill test, so a project can narrow it to fast tests. The command becomes `<interpreter> -m pytest -q -x <test-args>`.
 - **AC-06** `mutate_ts.py --min N FILE...` uses only the standard library and runs `npx --no-install stryker run` with the Vitest runner:
   - It mutates only the given files that are not tests, excluding `*.test.*`, `*.spec.*` and anything under `__tests__/`.
+  - It never mutates the installed kit under `.factory/`, or tool configuration files named `*.config.*` (`eslint.config.js`, `vitest.config.ts` and so on). *(Clarified 17 Nov 2026, product owner decision during T2: config files pulled the reference fixture's score down to 47%.)*
   - It reads the mutation score from Stryker's JSON report and exits 0 at or above N%, 1 below.
 - **AC-07** Both helpers:
   - exit 0 with the message "no source files to mutate" when every given file is a test
@@ -104,7 +105,11 @@ Give the E05 gate real work to do. Two profiles, Python and TS/JS, turn the gate
 
   For each variant, the gate exits 1, that check fails, and every other check passes or is n/a.
 - **AC-11** `tests/fixtures/ts-js-ref/` is a small Vitest project with a committed `package-lock.json`. Installed with `npm ci`, it passes every TS/JS check, and the gate exits 0.
-- **AC-12** Each TS/JS check has a seeded-bug variant that breaks that check and nothing else: format, lint, types, build, tests, coverage and mutation.
+- **AC-12** Each TS/JS check has a seeded-bug variant: format, lint, types, build, tests, coverage and mutation. Every variant breaks its own check and nothing else, with two exceptions:
+  - The **tests** variant also fails coverage and mutation, because both need a green test suite: the coverage check reruns the tests, and Stryker refuses to start when its initial test run fails.
+  - The **types** variant also fails build, because the build compiles with `tsc`, which type-checks.
+
+  *(Changes, 17 Nov 2026, product owner decisions during T2.)*
 - **AC-13** The TS/JS fixture tests are skipped, with a stated reason, only when `node` or `npm` is not on PATH. When Node is present, a failed `npm ci` is a test failure, not a skip.
 
 **Dogfooding**
