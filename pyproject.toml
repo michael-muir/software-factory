@@ -27,7 +27,7 @@ line-length = 100
 select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF"]
 
 [tool.ruff.lint.isort]
-known-first-party = ["factory_installer", "gate", "mutate_python", "mutate_ts", "tests"]
+known-first-party = ["factory_installer", "gate", "mutate_python", "mutate_ts", "run_hook", "tests"]
 
 [tool.ruff.lint.per-file-ignores]
 # The launcher must parse on old Pythons (ADR 0002): no f-strings or annotations.
@@ -37,7 +37,13 @@ known-first-party = ["factory_installer", "gate", "mutate_python", "mutate_ts", 
 python_version = "3.11"
 strict = true
 mypy_path = "kit/.factory/gates,kit/.factory/gates/tools"
-files = ["factory_installer", "tests", "kit/.factory/gates/gate.py", "kit/.factory/gates/tools"]
+files = [
+    "factory_installer",
+    "tests",
+    "kit/.factory/gates/gate.py",
+    "kit/.factory/gates/tools",
+    "kit/.factory/gates/hooks/run_hook.py",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

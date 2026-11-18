@@ -2,6 +2,7 @@
 
 python install.py [PATH] [--dry-run] [--force] [--json]
 python install.py check [PATH]
+python install.py hooks [PATH] [--force] [--remove]
 """
 
 from __future__ import annotations
@@ -14,6 +15,7 @@ from pathlib import Path
 
 from factory_installer import config_schema, manifest
 from factory_installer.apply import apply, write_file
+from factory_installer.hooks import run_hooks
 from factory_installer.kit import KIT_ROOT, load_kit
 from factory_installer.plan import MERGE_SUFFIX, manifest_deleted, manifest_files, plan
 from factory_installer.report import Report
@@ -26,7 +28,8 @@ def _install_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="install.py",
         description="Install the Software Factory kit into a git repository. "
-        "Use 'install.py check [PATH]' to validate .agentic/config.toml.",
+        "Use 'install.py check [PATH]' to validate .agentic/config.toml, and "
+        "'install.py hooks [PATH]' to switch on the git hooks.",
     )
     parser.add_argument("path", nargs="?", default=".", help="target directory (default: .)")
     parser.add_argument("--dry-run", action="store_true", help="show the plan; write nothing")
@@ -41,6 +44,19 @@ def _check_parser() -> argparse.ArgumentParser:
         prog="install.py check", description="Validate .agentic/config.toml."
     )
     parser.add_argument("path", nargs="?", default=".", help="repository root (default: .)")
+    return parser
+
+
+def _hooks_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="install.py hooks",
+        description="Switch on the factory git hooks for this clone (sets core.hooksPath).",
+    )
+    parser.add_argument("path", nargs="?", default=".", help="repository root (default: .)")
+    parser.add_argument(
+        "--force", action="store_true", help="replace a core.hooksPath set by something else"
+    )
+    parser.add_argument("--remove", action="store_true", help="switch the factory hooks off again")
     return parser
 
 
@@ -114,6 +130,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args_list[:1] == ["check"]:
         check_args = _check_parser().parse_args(args_list[1:])
         return run_check(Path(check_args.path))
+    if args_list[:1] == ["hooks"]:
+        hooks_args = _hooks_parser().parse_args(args_list[1:])
+        return run_hooks(Path(hooks_args.path), force=hooks_args.force, remove=hooks_args.remove)
     args = _install_parser().parse_args(args_list)
     return run_install(
         Path(args.path),
