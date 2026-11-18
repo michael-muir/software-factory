@@ -66,7 +66,10 @@ def test_python_profile_matches_the_spec() -> None:
         ],
     }
     assert checks["mutation"]["timeout_s"] == 1800
-    assert all("timeout_s" not in table for name, table in checks.items() if name != "mutation")
+    # E07/T4 change: the Windows CI runner needs more than 600 s for this repo's tests.
+    assert checks["tests"]["timeout_s"] == 1200
+    timed = ("mutation", "tests")
+    assert all("timeout_s" not in table for name, table in checks.items() if name not in timed)
 
 
 # --- AC-03: loads in the gate, ships in the kit -------------------------------------------------
