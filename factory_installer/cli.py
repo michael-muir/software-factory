@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import dataclasses
+import importlib.util
 import sys
 import tomllib
 from collections.abc import Sequence
@@ -135,12 +136,27 @@ def run_check(repo: Path) -> int:
         default = config_schema.toml_value(config_schema.default_for(key))
         print(f"{shown}: {key}: not set, using default {default}")
 
-    if result.errors:
-        count = len(result.errors)
+    problems = state_problems(repo)
+    for problem in problems:
+        print(problem)
+    if result.errors or problems:
+        count = len(result.errors) + len(problems)
         print(f"{shown}: {count} error{'s' if count != 1 else ''}")
         return 1
     print(f"{shown}: OK")
     return 0
+
+
+def state_problems(repo: Path, kit_root: Path = KIT_ROOT) -> list[str]:
+    """The target's state-file problems, from the kit's own state module (E02, ADR 0015)."""
+    path = kit_root / ".factory" / "state" / "state.py"
+    spec = importlib.util.spec_from_file_location("factory_kit_state", path)
+    if spec is None or spec.loader is None:
+        return []
+    module = importlib.util.module_from_spec(spec)
+    sys.modules["factory_kit_state"] = module
+    spec.loader.exec_module(module)
+    return [str(p) for p in module.validate(repo)]
 
 
 def run_install(

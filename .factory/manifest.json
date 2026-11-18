@@ -6,7 +6,7 @@
     ".factory/.gitignore": "a8115628a5707f002d62bcb965327fc7b13352c7a601dcccd2d41e90e1ccdc49",
     ".factory/adapters/.gitkeep": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
     ".factory/agents/.gitkeep": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-    ".factory/gates/gate.py": "2b2f98f20edc2fa4a1af43c0baa6fe63dc8154183de89fab3e57b11e076b1e46",
+    ".factory/gates/gate.py": "b952a4c513fdd207fa39f6530ee8eade7a3f310ad54bc7320d56c8ceab370f43",
     ".factory/gates/hooks/pre-commit": "da1de00b7e0c59878a3fecc4ce860932768257a0245444ce2b41943a7cc7e814",
     ".factory/gates/hooks/pre-push": "26cc1c0474a70e584489bbe3be2dfa2d00deb8f35e801b7238502b551da7bab7",
     ".factory/gates/hooks/run_hook.py": "c52c144e72fae1c3735e843cea3cadcfd752bac251b42c4044dc69061b389b1e",
@@ -17,6 +17,7 @@
     ".factory/gates/tools/mutate_ts.py": "660a1026e3c05139f0a935ca4ddc74bc16eb9ae02cd4f37f86ec9f73e25a1ef5",
     ".factory/skills/.gitkeep": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
     ".factory/standards/.gitkeep": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    ".factory/state/state.py": "2ed824805ed7cd9a0ebc7e051b104e5e7ef66dee9766e1189347cdee655235f5",
     ".factory/workflow/.gitkeep": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
     ".github/workflows/factory-gate.yml": "bcfac1e45bc3600567b32e75d6b5e0bedbf71bb0c0ee876b65af32c60a880469"
   },

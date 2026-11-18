@@ -14,6 +14,7 @@ import contextlib
 import dataclasses
 import fnmatch
 import hashlib
+import importlib.util
 import json
 import os
 import shutil
@@ -25,6 +26,7 @@ import tomllib
 from collections.abc import Collection, Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from types import ModuleType
 from typing import Any
 
 CHECK_ORDER = ("format", "lint", "types", "build", "tests", "coverage", "mutation")
@@ -549,6 +551,28 @@ def find_root(start: Path) -> Path:
     return Path(completed.stdout.strip())
 
 
+STATE_MODULE = Path(".factory") / "state" / "state.py"
+
+
+def load_state_module(path: Path) -> ModuleType | None:
+    """The E02 state module (ADR 0015), or None if this kit predates it."""
+    if not path.is_file():
+        return None
+    spec = importlib.util.spec_from_file_location("factory_state", path)
+    if spec is None or spec.loader is None:
+        return None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules["factory_state"] = module  # dataclasses look the module up by name
+    spec.loader.exec_module(module)
+    return module
+
+
+def state_problems(root: Path) -> list[str]:
+    """Problems in the repo's state files, as `<file>: <where>: <message>` (E02 AC-04)."""
+    module = load_state_module(root / STATE_MODULE)
+    return [] if module is None else [str(p) for p in module.validate(root)]
+
+
 def parse_checks(text: str) -> list[str]:
     """`--checks a,b` -> ["a", "b"]; unknown names are a usage error (E07 AC-01)."""
     names = [name.strip() for name in text.split(",") if name.strip()]
@@ -573,6 +597,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         only = parse_checks(args.checks) if args.checks is not None else None
         root = find_root(Path.cwd())
         settings = Settings.load(root)
+        problems = state_problems(root)
+        if problems:
+            listed = "".join(f"\ngate: {problem}" for problem in problems)
+            raise GateError(f"invalid state files (python .factory/state/state.py check):{listed}")
         if args.base_ref is not None:
             if not args.base_ref.strip():
                 raise GateError("--base-ref must not be empty")
