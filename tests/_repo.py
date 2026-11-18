@@ -16,7 +16,7 @@ KIT_VERSION = (REPO_ROOT / "kit" / "VERSION").read_text(encoding="utf-8").strip(
 # E01 spec "Target layout" plus the files ADR 0004 (.gitattributes) and ADR 0005 (.gitignore)
 # add, plus the gate engine E05 AC-21 ships in .factory/gates/ (replacing its .gitkeep),
 # plus the Python profile and its mutation helper (E06 AC-01, AC-05), plus the git hooks
-# and their launcher (E07 AC-04).
+# and their launcher (E07 AC-04), plus the state module (E02, ADR 0015).
 KIT_FILES = frozenset(
     {
         ".factory/.gitattributes",
@@ -33,6 +33,7 @@ KIT_FILES = frozenset(
         ".factory/gates/hooks/pre-commit",
         ".factory/gates/hooks/pre-push",
         ".factory/gates/hooks/run_hook.py",
+        ".factory/state/state.py",
         ".factory/workflow/.gitkeep",
         ".factory/adapters/.gitkeep",
     }
