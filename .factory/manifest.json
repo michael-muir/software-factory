@@ -17,7 +17,17 @@
     ".factory/gates/tools/mutate_ts.py": "660a1026e3c05139f0a935ca4ddc74bc16eb9ae02cd4f37f86ec9f73e25a1ef5",
     ".factory/skills/.gitkeep": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
     ".factory/standards/.gitkeep": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-    ".factory/workflow/.gitkeep": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    ".factory/workflow/.gitkeep": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    ".github/workflows/factory-gate.yml": "bcfac1e45bc3600567b32e75d6b5e0bedbf71bb0c0ee876b65af32c60a880469"
   },
-  "deleted": []
+  "deleted": [],
+  "pipelines": {
+    "github": {
+      "os": [
+        "ubuntu",
+        "windows",
+        "macos"
+      ]
+    }
+  }
 }

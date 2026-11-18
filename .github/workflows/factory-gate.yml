@@ -1,0 +1,28 @@
+# Software Factory gate (E07). Rendered by `python install.py ci github`; upgrades re-render it.
+name: factory-gate
+on:
+  pull_request:
+  push:
+    branches: ["main"]
+jobs:
+  gate:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@v6
+      - run: uv sync --locked
+      - name: Gate (pull request)
+        if: github.event_name == 'pull_request'
+        run: "uv run python .factory/gates/gate.py --base-ref origin/${{ github.base_ref }}"
+      - name: Gate
+        if: github.event_name != 'pull_request'
+        run: "uv run python .factory/gates/gate.py"
