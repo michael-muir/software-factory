@@ -1,0 +1,43 @@
+# Software Factory gate profile: Python (E06)
+#
+# Tools, taken from the project's own environment: ruff, mypy, pytest, coverage, cosmic-ray.
+# Run the gate inside that environment so these names resolve, for example:
+#     uv run python .factory/gates/gate.py
+#
+# The gate fails any check that changes the repo (ADR 0008), so git-ignore what the tools
+# write: .coverage, .mypy_cache/, .ruff_cache/, .pytest_cache/, __pycache__/
+#
+# mypy runs without arguments: declare its targets in [tool.mypy] files = [...].
+# Mutation (cosmic-ray, via tools/mutate_python.py) reads, from pyproject.toml:
+#     [tool.software-factory.mutation]
+#     max-mutants = 100   # deterministic sample cap per run
+#     test-args = []      # extra pytest args for the kill test, e.g. ["-m", "not slow"]
+
+name = "python"
+detect = ["pyproject.toml", "setup.py", "setup.cfg"]
+mutation_paths = ["*.py"]
+
+[checks.format]
+command = ["ruff", "format", "--check", "--extend-exclude", "./.factory", "."]
+
+[checks.lint]
+command = ["ruff", "check", "--extend-exclude", "./.factory", "."]
+
+[checks.types]
+command = ["mypy"]
+
+[checks.tests]
+command = ["coverage", "run", "-m", "pytest"]
+
+[checks.coverage]
+command = ["coverage", "report", "--fail-under={coverage_percent}"]
+
+[checks.mutation]
+command = [
+    "python",
+    ".factory/gates/tools/mutate_python.py",
+    "--min",
+    "{mutation_percent}",
+    "{changed_files}",
+]
+timeout_s = 1800
