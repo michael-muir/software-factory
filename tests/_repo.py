@@ -27,6 +27,8 @@ KIT_FILES = frozenset(
         ".factory/gates/profiles/.gitkeep",
         ".factory/gates/profiles/python.toml",
         ".factory/gates/tools/mutate_python.py",
+        ".factory/gates/profiles/ts-js.toml",
+        ".factory/gates/tools/mutate_ts.py",
         ".factory/workflow/.gitkeep",
         ".factory/adapters/.gitkeep",
     }
