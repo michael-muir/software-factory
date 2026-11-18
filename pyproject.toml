@@ -12,6 +12,7 @@ dev = [
     "coverage>=7.6",
     "mypy>=1.13",
     "pytest>=8.3",
+    "pytest-xdist>=3.8.0",
     "ruff>=0.8",
 ]
 
@@ -41,7 +42,7 @@ files = ["factory_installer", "tests", "kit/.factory/gates/gate.py", "kit/.facto
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["kit/.factory/gates", "kit/.factory/gates/tools"]
-addopts = "--strict-markers --ignore=tests/fixtures"
+addopts = "--strict-markers --ignore=tests/fixtures -n auto"
 markers = [
     "ac(id): acceptance criterion from a spec in docs/specs that this test covers",
     "slow: runs real tools through the gate; skip locally with -m \"not slow\"",
@@ -50,4 +51,12 @@ xfail_strict = true
 
 [tool.coverage.run]
 branch = true
+# pytest-xdist workers are subprocesses; `coverage report` combines their data files.
+patch = ["subprocess"]
 source = ["factory_installer", "kit/.factory/gates"]
+
+[tool.software-factory.mutation]
+# Mutants tested per gate run (spec E06 AC-05b); the sample is deterministic.
+max-mutants = 50
+# Kill test: the fast suite only. Slow tests run real tools and take minutes each.
+test-args = ["-m", "not slow"]
