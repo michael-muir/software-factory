@@ -50,6 +50,7 @@ def profile(
     detect: Sequence[str] = (),
     checks: Mapping[str, Sequence[str]] | None = None,
     mutation_paths: Sequence[str] = ("*.py",),
+    timeouts: Mapping[str, int] | None = None,
 ) -> str:
     lines = [
         f"name = {toml_str(name)}",
@@ -58,6 +59,8 @@ def profile(
     ]
     for check, command in (checks or {}).items():
         lines += ["", f"[checks.{check}]", f"command = {toml_list(command)}"]
+        if timeouts and check in timeouts:
+            lines.append(f"timeout_s = {timeouts[check]}")
     return "\n".join(lines) + "\n"
 
 
