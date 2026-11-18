@@ -21,7 +21,7 @@ LEGACY_EPIC = "E01"
 # AC ids named by @pytest.mark.ac(...) on every collected test, captured before -k/-m deselection.
 COLLECTED_AC_IDS = pytest.StashKey[Set[str]]()
 
-_AC = re.compile(r"\*\*(AC-\d{2})\*\*")
+_AC = re.compile(r"\*\*(AC-\d{2}[a-z]?)\*\*")  # e.g. AC-05, and AC-05b for a later insertion
 _EPIC = re.compile(r"^(E\d{2})-")
 
 

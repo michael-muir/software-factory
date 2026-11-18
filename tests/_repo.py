@@ -14,7 +14,8 @@ INSTALL_PY = REPO_ROOT / "install.py"
 KIT_VERSION = (REPO_ROOT / "kit" / "VERSION").read_text(encoding="utf-8").strip()
 
 # E01 spec "Target layout" plus the files ADR 0004 (.gitattributes) and ADR 0005 (.gitignore)
-# add, plus the gate engine E05 AC-21 ships in .factory/gates/ (replacing its .gitkeep).
+# add, plus the gate engine E05 AC-21 ships in .factory/gates/ (replacing its .gitkeep),
+# plus the Python profile and its mutation helper (E06 AC-01, AC-05).
 KIT_FILES = frozenset(
     {
         ".factory/.gitattributes",
@@ -24,6 +25,8 @@ KIT_FILES = frozenset(
         ".factory/standards/.gitkeep",
         ".factory/gates/gate.py",
         ".factory/gates/profiles/.gitkeep",
+        ".factory/gates/profiles/python.toml",
+        ".factory/gates/tools/mutate_python.py",
         ".factory/workflow/.gitkeep",
         ".factory/adapters/.gitkeep",
     }
