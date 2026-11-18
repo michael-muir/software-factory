@@ -33,11 +33,16 @@ def content_hash(data: bytes) -> str:
     return hashlib.sha256(to_lf(data)).hexdigest()
 
 
+def _is_bytecode(rel: Path) -> bool:
+    """Python's caches, written into kit/ whenever the kit's scripts are imported."""
+    return "__pycache__" in rel.parts or rel.suffix == ".pyc"
+
+
 def load_kit(root: Path = KIT_ROOT) -> Kit:
     version = (root / "VERSION").read_text(encoding="utf-8").strip()
     files: dict[str, bytes] = {}
     for top in (KIT_DIR, STATE_DIR):
         for path in sorted((root / top).rglob("*")):
-            if path.is_file():
+            if path.is_file() and not _is_bytecode(path.relative_to(root)):
                 files[path.relative_to(root).as_posix()] = to_lf(path.read_bytes())
     return Kit(version=version, files=files)
