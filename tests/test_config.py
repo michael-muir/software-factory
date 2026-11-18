@@ -21,7 +21,13 @@ SPEC_DEFAULTS = {
     "hosting": {"mode": "local"},
     "budgets": {"per_job_usd": 15, "per_day_usd": 120, "warn_at": 0.8, "halt_at": 1.0},
     "review": {"max_rounds": 3},
-    "gates": {"mutation_threshold": 0.6, "mutation_scope": "changed-lines"},
+    "gates": {
+        "coverage_threshold": 0.8,
+        "mutation_threshold": 0.6,
+        "mutation_scope": "changed-lines",
+        "profiles": [],
+        "base_ref": "main",
+    },
     "models": {"cross_model_vendor": "openai"},
     "telemetry": {"enabled": False},
 }

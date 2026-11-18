@@ -72,8 +72,11 @@ halt_at = 1.0
 max_rounds = 3
 
 [gates]
+coverage_threshold = 0.8        # added by E05
 mutation_threshold = 0.6
 mutation_scope = "changed-lines"
+profiles = []                   # added by E05; empty = auto-detect
+base_ref = "main"               # added by E05
 
 [models]
 cross_model_vendor = "openai"
@@ -93,14 +96,18 @@ enabled = false
 | `budgets.warn_at` | number | > 0, and ≤ `halt_at` |
 | `budgets.halt_at` | number | ≤ 1 |
 | `review.max_rounds` | integer | 1 to 10 |
+| `gates.coverage_threshold` | number | 0 to 1 (E05) |
 | `gates.mutation_threshold` | number | 0 to 1 |
 | `gates.mutation_scope` | string | `changed-lines` or `all` |
+| `gates.profiles` | list of strings | each one not empty (E05) |
+| `gates.base_ref` | string | not empty (E05) |
 | `models.cross_model_vendor` | string | not empty |
 | `telemetry.enabled` | boolean | — |
 
 - A number is an integer or a float, but never a boolean.
 - A key that is missing is allowed: its default applies, and `check` lists it as information while still exiting 0 (assumption 3).
 - An unknown key or unknown section is an error.
+- **Change, 17 Nov 2026 (E05):** `gates.coverage_threshold`, `gates.profiles` and `gates.base_ref` were added to the defaults and the rules. The product owner chose to show them in the kit's default config.
 - **Change, 17 Nov 2026:** `factory.kit_version` was removed from the config. Upgrades never rewrite `config.toml` (ADR 0003), so the value would go stale. The installed kit version lives only in `.factory/manifest.json`. A `[factory]` section is now an unknown section.
 
 ## Acceptance criteria

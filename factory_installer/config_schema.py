@@ -12,12 +12,18 @@ from typing import Any
 
 Check = Callable[[Any], str | None]
 
-_KIND_NAMES = {"int": "an integer", "number": "a number", "str": "a string", "bool": "a boolean"}
+_KIND_NAMES = {
+    "int": "an integer",
+    "number": "a number",
+    "str": "a string",
+    "bool": "a boolean",
+    "strlist": "a list of strings",
+}
 
 
 @dataclass(frozen=True)
 class Field:
-    kind: str  # "int" | "number" | "str" | "bool"
+    kind: str  # "int" | "number" | "str" | "bool" | "strlist"
     default: object
     check: Check | None = None
     comment: str = ""
@@ -67,6 +73,10 @@ def _not_empty(value: Any) -> str | None:
     return None if value.strip() else "must not be empty"
 
 
+def _no_empty_items(value: Any) -> str | None:
+    return None if all(item.strip() for item in value) else "must not contain empty names"
+
+
 TOP_LEVEL: dict[str, Field] = {
     "schema_version": Field("int", 1, _equals_one),
 }
@@ -85,10 +95,13 @@ SECTIONS: dict[str, dict[str, Field]] = {
         "max_rounds": Field("int", 3, _between(1, 10), "1 to 10"),
     },
     "gates": {
+        "coverage_threshold": Field("number", 0.8, _between(0, 1), "0 to 1"),
         "mutation_threshold": Field("number", 0.6, _between(0, 1), "0 to 1"),
         "mutation_scope": Field(
             "str", "changed-lines", _one_of("changed-lines", "all"), '"changed-lines" | "all"'
         ),
+        "profiles": Field("strlist", [], _no_empty_items, "empty = auto-detect"),
+        "base_ref": Field("str", "main", _not_empty, "branch that changed files are measured from"),
     },
     "models": {
         "cross_model_vendor": Field("str", "openai", _not_empty),
@@ -108,6 +121,8 @@ def _type_ok(kind: str, value: Any) -> bool:
         return isinstance(value, int | float)
     if kind == "str":
         return isinstance(value, str)
+    if kind == "strlist":
+        return isinstance(value, list) and all(isinstance(item, str) for item in value)
     return False
 
 
@@ -212,6 +227,8 @@ def toml_value(value: object) -> str:
         return repr(value)
     if isinstance(value, str):
         return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
+    if isinstance(value, list):
+        return "[" + ", ".join(toml_value(item) for item in value) + "]"
     raise TypeError(f"cannot render {type(value).__name__} as TOML")
 
 

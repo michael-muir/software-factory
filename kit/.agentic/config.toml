@@ -16,8 +16,11 @@ halt_at = 1.0  # fraction of budget; <= 1
 max_rounds = 3  # 1 to 10
 
 [gates]
+coverage_threshold = 0.8  # 0 to 1
 mutation_threshold = 0.6  # 0 to 1
 mutation_scope = "changed-lines"  # "changed-lines" | "all"
+profiles = []  # empty = auto-detect
+base_ref = "main"  # branch that changed files are measured from
 
 [models]
 cross_model_vendor = "openai"
