@@ -17,9 +17,11 @@ EXECUTABLE_FILES = frozenset({".factory/gates/hooks/pre-commit", ".factory/gates
 class Kit:
     version: str
     files: dict[str, bytes]  # posix path relative to the target root -> LF content
+    # Rendered files outside .factory/ that follow the kit-file rules (pipelines, ADR 0013).
+    extra_managed: frozenset[str] = frozenset()
 
     def is_kit_managed(self, rel: str) -> bool:
-        return rel.startswith(KIT_DIR + "/")
+        return rel.startswith(KIT_DIR + "/") or rel in self.extra_managed
 
 
 def to_lf(data: bytes) -> bytes:
