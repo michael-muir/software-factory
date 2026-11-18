@@ -15,6 +15,7 @@ The product owner decided both on 17 Nov 2026.
 
 - **Edited kit file, kit unchanged:** `keep`, reported as kept, and no `.factory-new` is written. A `.factory-new` is written only when the new kit's content differs from the manifest's (M ≠ K) and from the file on disk (D ≠ K).
 - **State files once installed:** when a manifest exists, an `.agentic/` file that is already present is reported as `unchanged`. On a first install, where no manifest exists, a pre-existing state file is still `skipped` (AC-09).
+- **Remembering deleted kit files:** the manifest gains a `deleted` list. ADR 0005's choice A says to drop a locally deleted file from the manifest "so it stays deleted". On its own, that brings the file back on the next run, because it then looks like a kit file that was never installed. Listing it under `deleted` keeps it out of `files` and keeps it deleted on every later run. If the user re-creates the file, it is treated like any file that wasn't installed by the kit: unchanged if it matches the kit, skipped otherwise. A path dropped from the kit is forgotten.
 - **"Up to date":** a run is up to date when nothing is created, skipped, overwritten, updated, kept or removed, and nothing is waiting to merge. The text report then says "Up to date".
 
 ## Consequences

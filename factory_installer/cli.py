@@ -15,7 +15,7 @@ from pathlib import Path
 from factory_installer import config_schema, manifest
 from factory_installer.apply import apply, write_file
 from factory_installer.kit import KIT_ROOT, load_kit
-from factory_installer.plan import manifest_files, plan
+from factory_installer.plan import MERGE_SUFFIX, manifest_deleted, manifest_files, plan
 from factory_installer.report import Report
 from factory_installer.target import PathEscapeError, current_hashes, ensure_inside, find_git_root
 
@@ -81,16 +81,25 @@ def run_install(target: Path, *, kit_root: Path, dry_run: bool, force: bool, as_
         return 1
 
     kit = load_kit(kit_root)
+    merge_paths = [rel + MERGE_SUFFIX for rel in kit.files if kit.is_kit_managed(rel)]
     try:
-        ensure_inside(target, [*kit.files, manifest.MANIFEST_RELPATH])
+        # Check our own paths before reading anything, then the manifest's untrusted ones.
+        ensure_inside(target, [*kit.files, *merge_paths, manifest.MANIFEST_RELPATH])
+        previous = manifest.load(target)
+        previous_files = previous.files if previous is not None else None
+        ensure_inside(target, previous_files or {})
     except PathEscapeError as exc:
         print(f"{exc}. Refusing to write outside {target}; nothing written.", file=sys.stderr)
         return 1
 
-    steps = plan(kit, current_hashes(target, kit.files), force=force)
+    deleted = previous.deleted if previous is not None else []
+    disk = current_hashes(target, {*kit.files, *(previous_files or {})})
+    steps = plan(kit, disk, previous_files, deleted=deleted, force=force)
     if not dry_run:
         apply(target, steps)
-        new_manifest = manifest.Manifest(kit.version, manifest_files(steps)).to_bytes()
+        new_manifest = manifest.Manifest(
+            kit.version, manifest_files(steps, previous_files), manifest_deleted(steps)
+        ).to_bytes()
         manifest_path = target / manifest.MANIFEST_RELPATH
         if not manifest_path.is_file() or manifest_path.read_bytes() != new_manifest:
             write_file(target, manifest.MANIFEST_RELPATH, new_manifest)
