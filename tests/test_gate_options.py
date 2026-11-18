@@ -201,7 +201,7 @@ def test_schema_and_gate_share_the_defaults() -> None:
 
 
 def _check(tmp_path: Path, capsys: pytest.CaptureFixture[str], gates: str) -> tuple[int, str]:
-    (tmp_path / ".agentic").mkdir()
+    (tmp_path / ".agentic").mkdir(parents=True)
     (tmp_path / ".agentic" / "config.toml").write_text(f"[gates]\n{gates}\n", encoding="utf-8")
     code = cli.main(["check", str(tmp_path)])
     out = capsys.readouterr()
