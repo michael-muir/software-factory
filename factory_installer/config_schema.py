@@ -77,6 +77,23 @@ def _no_empty_items(value: Any) -> str | None:
     return None if all(item.strip() for item in value) else "must not contain empty names"
 
 
+# The gate's check names, in its fixed order (mirrors gate.CHECK_ORDER).
+CHECK_NAMES = ("format", "lint", "types", "build", "tests", "coverage", "mutation")
+
+
+def _check_names(value: Any) -> str | None:
+    unknown = [item for item in value if item not in CHECK_NAMES]
+    if unknown:
+        return f"unknown check(s) {', '.join(unknown)}; valid: {', '.join(CHECK_NAMES)}"
+    return None
+
+
+def _command(value: Any) -> str | None:
+    if not value:
+        return "must not be empty"
+    return None if all(item.strip() for item in value) else "must not contain empty items"
+
+
 TOP_LEVEL: dict[str, Field] = {
     "schema_version": Field("int", 1, _equals_one),
 }
@@ -102,6 +119,12 @@ SECTIONS: dict[str, dict[str, Field]] = {
         ),
         "profiles": Field("strlist", [], _no_empty_items, "empty = auto-detect"),
         "base_ref": Field("str", "main", _not_empty, "branch that changed files are measured from"),
+        "commit_checks": Field(
+            "strlist", ["format", "lint", "types"], _check_names, "checks the pre-commit hook runs"
+        ),
+        "python_command": Field(
+            "strlist", ["python"], _command, 'runs the gate, e.g. ["uv", "run", "python"]'
+        ),
     },
     "models": {
         "cross_model_vendor": Field("str", "openai", _not_empty),

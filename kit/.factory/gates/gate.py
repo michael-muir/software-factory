@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import dataclasses
 import fnmatch
 import hashlib
 import json
@@ -21,7 +22,7 @@ import subprocess
 import sys
 import time
 import tomllib
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -40,6 +41,8 @@ DEFAULTS: dict[str, object] = {
     "mutation_scope": "changed-lines",
     "profiles": [],
     "base_ref": "main",
+    "commit_checks": ["format", "lint", "types"],
+    "python_command": ["python"],
 }
 
 
@@ -78,12 +81,31 @@ def _ref(value: object) -> str | None:
     return None if value.strip() else "must not be empty"
 
 
+def _check_names(value: object) -> str | None:
+    if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
+        return "expected a list of strings"
+    unknown = [item for item in value if item not in CHECK_ORDER]
+    if unknown:
+        return f"unknown check(s) {', '.join(unknown)}; valid: {', '.join(CHECK_ORDER)}"
+    return None
+
+
+def _command(value: object) -> str | None:
+    if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
+        return "expected a list of strings"
+    if not value:
+        return "must not be empty"
+    return None if all(item.strip() for item in value) else "must not contain empty items"
+
+
 _RULES = {
     "coverage_threshold": _fraction,
     "mutation_threshold": _fraction,
     "mutation_scope": _scope,
     "profiles": _names,
     "base_ref": _ref,
+    "commit_checks": _check_names,
+    "python_command": _command,
 }
 
 
@@ -94,6 +116,8 @@ class Settings:
     mutation_scope: str
     profiles: list[str]
     base_ref: str
+    commit_checks: list[str]
+    python_command: list[str]
 
     @classmethod
     def load(cls, root: Path) -> Settings:
@@ -121,6 +145,8 @@ class Settings:
             mutation_scope=str(values["mutation_scope"]),
             profiles=[str(name) for name in values["profiles"]],  # type: ignore[attr-defined]
             base_ref=str(values["base_ref"]),
+            commit_checks=[str(name) for name in values["commit_checks"]],  # type: ignore[attr-defined]
+            python_command=[str(arg) for arg in values["python_command"]],  # type: ignore[attr-defined]
         )
 
 
@@ -377,7 +403,7 @@ def changed_files(root: Path, base_ref: str) -> list[str]:
         ["git", "merge-base", base_ref, "HEAD"], cwd=root, capture_output=True, text=True
     )
     if merge_base.returncode != 0:
-        raise BaseRefError(f"base ref '{base_ref}' not found (gates.base_ref)")
+        raise BaseRefError(f"base ref '{base_ref}' not found (gates.base_ref or --base-ref)")
     base = merge_base.stdout.strip()
     diffed = _git_paths(root, "diff", "--name-only", "-z", "--diff-filter=d", base) or []
     untracked = _git_paths(root, "ls-files", "--others", "--exclude-standard", "-z") or []
@@ -425,8 +451,13 @@ def expand(command: list[str], values: dict[str, str], files: list[str]) -> list
 
 
 def run_profiles(
-    root: Path, profiles: list[Profile], settings: Settings, files: FileSource
+    root: Path,
+    profiles: list[Profile],
+    settings: Settings,
+    files: FileSource,
+    only: Collection[str] | None = None,
 ) -> list[Result]:
+    """Run every profile's checks in order; with `only`, the rest are skipped (E07 AC-01)."""
     values = {
         "{coverage_percent}": str(round(settings.coverage_threshold * 100)),
         "{mutation_percent}": str(round(settings.mutation_threshold * 100)),
@@ -434,6 +465,9 @@ def run_profiles(
     results: list[Result] = []
     for profile in profiles:
         for check in CHECK_ORDER:
+            if only is not None and check not in only:
+                results.append(Result(profile.name, check, "skipped", "not selected"))
+                continue
             spec = profile.checks.get(check)
             if spec is None:
                 results.append(Result(profile.name, check, "n/a", "not defined by the profile"))
@@ -483,7 +517,7 @@ class Report:
         return json.dumps(data, indent=2)
 
     def to_text(self) -> str:
-        lines = [f"Gate: {self.root}"]
+        lines = [f"Gate: {self.root}", f"Base: {self.base_ref}"]
         width = max((len(name) for name in self.profiles), default=0)
         for r in self.results:
             took = f"{r.duration_s:.2f}s" if r.duration_s is not None else "-"
@@ -515,19 +549,40 @@ def find_root(start: Path) -> Path:
     return Path(completed.stdout.strip())
 
 
+def parse_checks(text: str) -> list[str]:
+    """`--checks a,b` -> ["a", "b"]; unknown names are a usage error (E07 AC-01)."""
+    names = [name.strip() for name in text.split(",") if name.strip()]
+    unknown = [name for name in names if name not in CHECK_ORDER]
+    if unknown or not names:
+        shown = ", ".join(unknown) if unknown else "(none)"
+        raise GateError(f"--checks: unknown check(s) {shown}; valid: {', '.join(CHECK_ORDER)}")
+    return names
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="gate.py", description="Run the repository gate.")
     parser.add_argument("--json", action="store_true", help="print the report as JSON")
+    parser.add_argument(
+        "--checks", metavar="NAME[,NAME...]", help="run only these checks; skip the rest"
+    )
+    parser.add_argument(
+        "--base-ref", metavar="REF", help="measure changed files from REF (overrides config)"
+    )
     args = parser.parse_args(argv)
     try:
+        only = parse_checks(args.checks) if args.checks is not None else None
         root = find_root(Path.cwd())
         settings = Settings.load(root)
+        if args.base_ref is not None:
+            if not args.base_ref.strip():
+                raise GateError("--base-ref must not be empty")
+            settings = dataclasses.replace(settings, base_ref=args.base_ref)
         selected = select_profiles(root, load_profiles(root), settings)
     except GateError as exc:
         print(f"gate: {exc}", file=sys.stderr)
         return 2
     files = FileSource(root, settings)
-    results = run_profiles(root, selected, settings, files)
+    results = run_profiles(root, selected, settings, files, only)
     names = [p.name for p in selected]
     report = Report(str(root), settings.base_ref, names, files.changed or [], results)
     print(report.to_json() if args.json else report.to_text())
