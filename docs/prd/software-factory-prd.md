@@ -69,40 +69,40 @@ We win by shipping the trust layer first — gates, state and roles as plain fil
 
 ## Staged breakdown
 
-The build runs in seven stages (0–6), ordered bottom-up through the blueprint's layers: what every other part reads and writes comes first. 30 epics, each a trackable chunk with a clear done-when; each stack profile and each connector becomes its own ticket under its epic.
+The build runs in seven stages (0–6), ordered bottom-up through the blueprint's layers: what every other part reads and writes comes first. 30 epics, each a trackable chunk with a clear done-when; each stack profile and each connector becomes its own ticket under its epic. Status lives in GitHub: each epic is an issue under its milestone (open = not started, a status label while active, closed = done).
 
-| ID | Stage | Epic | Delivers (blueprint path) | Depends on | Done when |
-| --- | --- | --- | --- | --- | --- |
-| E01 | 0 Foundation | Repo skeleton and installer v0 | `install/install.py`, `.agentic/` layout, `config.toml` schema | — | One command drops the skeleton into an empty repo and an existing one; Python 3.11+, Apache-2.0 |
-| E02 | 0 Foundation | State files | `STATE.md`, `tasks/`, `handoffs/`, `docs/adr`, `GLOSSARY.md` | E01 | A second session resumes a task from files alone |
-| E03 | 0 Foundation | Agent schema and tool scoping | `agents/_schema.md`, `model_hint`, per-role tool lists | E01 | A role cannot call a tool outside its list; locked tests reject edits |
-| E04 | 0 Foundation | Definition-of-done templates | `workflow/templates` for spec, task, ADR, PR evidence | E02 | Templates validated by a linter in the gate |
-| E05 | 1 Gates | Gate engine core | `gates/gate.py`: format, lint, types, build, tests, coverage, mutation; machine-readable report | E01 | Deterministic pass/fail with the same result on rerun; mutation scored on changed lines, 60% default |
-| E06 | 1 Gates | Stack profiles (Python and TS/JS, 2 tickets) | `gates/profiles/*.toml` for Python and TS/JS (the rest move to E30) | E05 | Each profile passes a reference repo and fails a seeded-bug repo |
-| E07 | 1 Gates | Hooks and CI | `gates/hooks`, `ci/` for GitHub Actions, GitLab CI, Azure Pipelines, Jenkins | E05 | Same gate verdict locally, on commit and in CI |
-| E08 | 1 Gates | PR evidence | `skills/pull-request-evidence`: gate report, AC trace, findings | E04, E05 | Every PR has evidence a reviewer can audit without rerunning |
-| E09 | 2 Knowledge | 16 core role definitions | `agents/core` (Spec Writer through Retro) | E03 | Each role has scope, tools, inputs, outputs and a model hint |
-| E10 | 2 Knowledge | Skills library (16) | `skills/*/SKILL.md`: TDD slices, threat check, handoff, debugging… | E09 | Each skill exercised in at least one end-to-end run |
-| E11 | 2 Knowledge | Standards packs (12) | `standards/`: PEP 8, Google C++, Uber Go, StyleCop… | E06 | Standards Reviewer cites pack rules by id |
-| E12 | 2 Knowledge | Tool adapters | `adapters/build.py` compiling to Claude Code, Copilot, Cursor | E09, E10 | The same role runs in all three tools from one source |
-| E13 | 3 Worker | Full-track pipeline | `workflow/pipeline.md`: spec → design → test (lock) → build → gate → review → docs → ship → learn | E08, E12 | One job runs end to end with human spec approval and merge |
-| E14 | 3 Worker | Review loop and round limits | 5 isolated reviewers, max 3 rounds, then escalate to a human; limit configurable per track | E13 | Round 4 never happens without a human decision |
-| E15 | 3 Worker | Lite track and pass-through | `workflow/tracks.md` (dep bumps, red main) | E13 | A dep bump ships on the lite track with full gates |
-| E16 | 3 Worker | Machine daemon and worktrees | `runner/run.py --daemon`, worktree per job, cost and turn caps | E05 | Parallel jobs never share a worktree; caps halt a job |
-| E17 | 3 Worker | Integrator and merge risk | Commit, PR, merge-risk rating, human merge checkpoint | E08, E13 | Low-risk vs high-risk routing matches the rating |
-| E30 | 3 Worker | Remaining stack profiles (6 tickets) | `gates/profiles/*.toml` for C++, Go, Rust, .NET, Lua, Unreal (UE 5.4+) | E06, E16 | Each passes a reference repo and fails a seeded-bug repo; Unreal runs on your build machine; all land before M5 |
-| E18 | 4 Control | Job index | SQLite job DB alongside `.agentic/` | E02 | Any session resumes any job after a crash |
-| E19 | 4 Control | Router session | Long-lived orchestrator: track choice, dispatch, checkpoints, replies | E13, E18 | Router runs several workers in parallel unattended |
-| E20 | 4 Control | Model router | strong / any / different-from hints → Opus, Sonnet, OpenAI by default for cross-model | E03 | Cross-model reviewers really run on a different model |
-| E21 | 4 Control | Cost controls | Defaults $15 per job, $120 per day; warn at 80%, halt and hand off at 100% | E18 | A blown budget halts within one turn and files a handoff |
-| E22 | 4 Control | Watchdog | `control/watchdog`, 5-minute heartbeat, repair or escalate | E16, E18 | Stalled workers, dead daemons and orphaned worktrees are fixed or escalated |
-| E23 | 4 Control | Hosting modes | Local-only and cloud + local daemon, chosen in config | E19, E16 | Both modes pass the same end-to-end suite |
-| E24 | 5 Intake | GitHub connector and reply channel | `intake/connectors/github`, `/foundry approve · reject · ask` | E19 | An issue becomes a job; status and approvals flow back to its thread |
-| E25 | 5 Intake | Two-stage filter | `intake/filter.toml` rules, then cheap-model triage | E24 | Noise drop rate and false-drop rate reported per day |
-| E26 | 5 Intake | More connectors | CI results, Slack/Teams, email and calendar | E25 | Each connector ships behind the same filter and reply contract |
-| E27 | 6 Visibility | Line Monitor dashboard | Local web app served by the daemon from SQLite: job board, approvals queue, gate health, spend; token auth in cloud mode | E19, E21 | Every "Needs you" item can be acted on from the board |
-| E28 | 6 Learning | Retro loop | Recurring failures → new checks and standards | E13 | A repeated failure produces a proposed gate or standard change |
-| E29 | 6 Ecosystem | Domain experts and Release Manager | Template + accessibility, aerospace, Unreal experts; semver release flow | E09 | A third party adds a domain expert from the template alone |
+| ID | Stage | Epic | Delivers (blueprint path) | Depends on | Done when | Issue |
+| --- | --- | --- | --- | --- | --- | --- |
+| E01 | 0 Foundation | Repo skeleton and installer v0 | `install/install.py`, `.agentic/` layout, `config.toml` schema | — | One command drops the skeleton into an empty repo and an existing one; Python 3.11+, Apache-2.0 | [#1](https://github.com/michael-muir/software-factory/issues/1) |
+| E02 | 0 Foundation | State files | `STATE.md`, `tasks/`, `handoffs/`, `docs/adr`, `GLOSSARY.md` | E01 | A second session resumes a task from files alone | [#2](https://github.com/michael-muir/software-factory/issues/2) |
+| E03 | 0 Foundation | Agent schema and tool scoping | `agents/_schema.md`, `model_hint`, per-role tool lists | E01 | A role cannot call a tool outside its list; locked tests reject edits | [#3](https://github.com/michael-muir/software-factory/issues/3) |
+| E04 | 0 Foundation | Definition-of-done templates | `workflow/templates` for spec, task, ADR, PR evidence | E02 | Templates validated by a linter in the gate | [#4](https://github.com/michael-muir/software-factory/issues/4) |
+| E05 | 1 Gates | Gate engine core | `gates/gate.py`: format, lint, types, build, tests, coverage, mutation; machine-readable report | E01 | Deterministic pass/fail with the same result on rerun; mutation scored on changed lines, 60% default | [#5](https://github.com/michael-muir/software-factory/issues/5) |
+| E06 | 1 Gates | Stack profiles (Python and TS/JS, 2 tickets) | `gates/profiles/*.toml` for Python and TS/JS (the rest move to E30) | E05 | Each profile passes a reference repo and fails a seeded-bug repo | [#6](https://github.com/michael-muir/software-factory/issues/6) |
+| E07 | 1 Gates | Hooks and CI | `gates/hooks`, `ci/` for GitHub Actions, GitLab CI, Azure Pipelines, Jenkins | E05 | Same gate verdict locally, on commit and in CI | [#7](https://github.com/michael-muir/software-factory/issues/7) |
+| E08 | 1 Gates | PR evidence | `skills/pull-request-evidence`: gate report, AC trace, findings | E04, E05 | Every PR has evidence a reviewer can audit without rerunning | [#8](https://github.com/michael-muir/software-factory/issues/8) |
+| E09 | 2 Knowledge | 16 core role definitions | `agents/core` (Spec Writer through Retro) | E03 | Each role has scope, tools, inputs, outputs and a model hint | [#9](https://github.com/michael-muir/software-factory/issues/9) |
+| E10 | 2 Knowledge | Skills library (16) | `skills/*/SKILL.md`: TDD slices, threat check, handoff, debugging… | E09 | Each skill exercised in at least one end-to-end run | [#10](https://github.com/michael-muir/software-factory/issues/10) |
+| E11 | 2 Knowledge | Standards packs (12) | `standards/`: PEP 8, Google C++, Uber Go, StyleCop… | E06 | Standards Reviewer cites pack rules by id | [#11](https://github.com/michael-muir/software-factory/issues/11) |
+| E12 | 2 Knowledge | Tool adapters | `adapters/build.py` compiling to Claude Code, Copilot, Cursor | E09, E10 | The same role runs in all three tools from one source | [#12](https://github.com/michael-muir/software-factory/issues/12) |
+| E13 | 3 Worker | Full-track pipeline | `workflow/pipeline.md`: spec → design → test (lock) → build → gate → review → docs → ship → learn | E08, E12 | One job runs end to end with human spec approval and merge | [#13](https://github.com/michael-muir/software-factory/issues/13) |
+| E14 | 3 Worker | Review loop and round limits | 5 isolated reviewers, max 3 rounds, then escalate to a human; limit configurable per track | E13 | Round 4 never happens without a human decision | [#14](https://github.com/michael-muir/software-factory/issues/14) |
+| E15 | 3 Worker | Lite track and pass-through | `workflow/tracks.md` (dep bumps, red main) | E13 | A dep bump ships on the lite track with full gates | [#15](https://github.com/michael-muir/software-factory/issues/15) |
+| E16 | 3 Worker | Machine daemon and worktrees | `runner/run.py --daemon`, worktree per job, cost and turn caps | E05 | Parallel jobs never share a worktree; caps halt a job | [#16](https://github.com/michael-muir/software-factory/issues/16) |
+| E17 | 3 Worker | Integrator and merge risk | Commit, PR, merge-risk rating, human merge checkpoint | E08, E13 | Low-risk vs high-risk routing matches the rating | [#17](https://github.com/michael-muir/software-factory/issues/17) |
+| E30 | 3 Worker | Remaining stack profiles (6 tickets) | `gates/profiles/*.toml` for C++, Go, Rust, .NET, Lua, Unreal (UE 5.4+) | E06, E16 | Each passes a reference repo and fails a seeded-bug repo; Unreal runs on your build machine; all land before M5 | [#30](https://github.com/michael-muir/software-factory/issues/30) |
+| E18 | 4 Control | Job index | SQLite job DB alongside `.agentic/` | E02 | Any session resumes any job after a crash | [#18](https://github.com/michael-muir/software-factory/issues/18) |
+| E19 | 4 Control | Router session | Long-lived orchestrator: track choice, dispatch, checkpoints, replies | E13, E18 | Router runs several workers in parallel unattended | [#19](https://github.com/michael-muir/software-factory/issues/19) |
+| E20 | 4 Control | Model router | strong / any / different-from hints → Opus, Sonnet, OpenAI by default for cross-model | E03 | Cross-model reviewers really run on a different model | [#20](https://github.com/michael-muir/software-factory/issues/20) |
+| E21 | 4 Control | Cost controls | Defaults $15 per job, $120 per day; warn at 80%, halt and hand off at 100% | E18 | A blown budget halts within one turn and files a handoff | [#21](https://github.com/michael-muir/software-factory/issues/21) |
+| E22 | 4 Control | Watchdog | `control/watchdog`, 5-minute heartbeat, repair or escalate | E16, E18 | Stalled workers, dead daemons and orphaned worktrees are fixed or escalated | [#22](https://github.com/michael-muir/software-factory/issues/22) |
+| E23 | 4 Control | Hosting modes | Local-only and cloud + local daemon, chosen in config | E19, E16 | Both modes pass the same end-to-end suite | [#23](https://github.com/michael-muir/software-factory/issues/23) |
+| E24 | 5 Intake | GitHub connector and reply channel | `intake/connectors/github`, `/foundry approve · reject · ask` | E19 | An issue becomes a job; status and approvals flow back to its thread | [#24](https://github.com/michael-muir/software-factory/issues/24) |
+| E25 | 5 Intake | Two-stage filter | `intake/filter.toml` rules, then cheap-model triage | E24 | Noise drop rate and false-drop rate reported per day | [#25](https://github.com/michael-muir/software-factory/issues/25) |
+| E26 | 5 Intake | More connectors | CI results, Slack/Teams, email and calendar | E25 | Each connector ships behind the same filter and reply contract | [#26](https://github.com/michael-muir/software-factory/issues/26) |
+| E27 | 6 Visibility | Line Monitor dashboard | Local web app served by the daemon from SQLite: job board, approvals queue, gate health, spend; token auth in cloud mode | E19, E21 | Every "Needs you" item can be acted on from the board | [#27](https://github.com/michael-muir/software-factory/issues/27) |
+| E28 | 6 Learning | Retro loop | Recurring failures → new checks and standards | E13 | A repeated failure produces a proposed gate or standard change | [#28](https://github.com/michael-muir/software-factory/issues/28) |
+| E29 | 6 Ecosystem | Domain experts and Release Manager | Template + accessibility, aerospace, Unreal experts; semver release flow | E09 | A third party adds a domain expert from the template alone | [#29](https://github.com/michael-muir/software-factory/issues/29) |
 
 ## Timeline and milestones
 
