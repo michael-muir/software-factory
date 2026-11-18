@@ -39,8 +39,8 @@ Give the E05 gate real work to do. Two profiles, Python and TS/JS, turn the gate
 
 | Check | Command |
 | --- | --- |
-| format | `ruff format --check .` |
-| lint | `ruff check .` |
+| format | `ruff format --check --extend-exclude ./.factory .` |
+| lint | `ruff check --extend-exclude ./.factory .` |
 | types | `mypy` (targets come from the project's mypy config) |
 | build | — (n/a) |
 | tests | `coverage run -m pytest` |
@@ -59,6 +59,8 @@ Give the E05 gate real work to do. Two profiles, Python and TS/JS, turn the gate
 | coverage | `npx --no-install vitest run --coverage --coverage.thresholds.lines={coverage_percent}` |
 | mutation | `python .factory/gates/tools/mutate_ts.py --min {mutation_percent} {changed_files}` (timeout 1800 s) |
 
+**Change, 17 Nov 2026 (found in T1):** ruff now runs with `--extend-exclude ./.factory`. Without it, a project's format and lint checks also judged the installed kit by the project's ruff settings. The reference fixture, with ruff's default 88-character lines, failed both checks on the kit's own files. `./.factory` excludes only the root kit, so this repo's kit source under `kit/.factory/` is still checked.
+
 ## Acceptance criteria
 
 **Profiles**
@@ -76,6 +78,7 @@ Give the E05 gate real work to do. Two profiles, Python and TS/JS, turn the gate
 - **AC-05** `mutate_python.py --min N FILE...` uses only the standard library and runs cosmic-ray:
   - It runs with the interpreter executing the helper, and its test command is `<that interpreter> -m pytest -q -x`.
   - It mutates only the given files that are not tests, excluding `test_*.py`, `*_test.py`, `conftest.py` and anything under a `tests/` or `test/` directory.
+  - It never mutates the installed kit under `.factory/`, which is factory machinery, not project code. *(Clarified 17 Nov 2026: with `mutation_scope = "all"`, the fixture runs mutation-tested `.factory/gates/gate.py` and ran for over 10 minutes.)*
   - It exits 0 when the share of mutants killed is at least N%, and 1 when it's below.
 - **AC-05b** *(Change, 17 Nov 2026: a design measurement found `gate.py` has 565 mutants, about 1 to 4 hours of serial runs.)* Two settings keep the Python helper inside its timeout. Both live under `[tool.software-factory.mutation]` in the project's `pyproject.toml`:
   - **`max-mutants`** (default 100): at most this many mutants are tested per run. The sample is deterministic: the same set of file contents always selects the same mutants. The score is the kill rate of the sample, and the output says "sampled X of Y".

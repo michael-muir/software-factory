@@ -8,6 +8,7 @@ dependencies = []
 
 [dependency-groups]
 dev = [
+    "cosmic-ray>=8.9",
     "coverage>=7.6",
     "mypy>=1.13",
     "pytest>=8.3",
@@ -25,7 +26,7 @@ line-length = 100
 select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF"]
 
 [tool.ruff.lint.isort]
-known-first-party = ["factory_installer", "gate", "tests"]
+known-first-party = ["factory_installer", "gate", "mutate_python", "tests"]
 
 [tool.ruff.lint.per-file-ignores]
 # The launcher must parse on old Pythons (ADR 0002): no f-strings or annotations.
@@ -34,13 +35,13 @@ known-first-party = ["factory_installer", "gate", "tests"]
 [tool.mypy]
 python_version = "3.11"
 strict = true
-mypy_path = "kit/.factory/gates"
-files = ["factory_installer", "tests", "kit/.factory/gates/gate.py"]
+mypy_path = "kit/.factory/gates,kit/.factory/gates/tools"
+files = ["factory_installer", "tests", "kit/.factory/gates/gate.py", "kit/.factory/gates/tools"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["kit/.factory/gates"]
-addopts = "--strict-markers"
+pythonpath = ["kit/.factory/gates", "kit/.factory/gates/tools"]
+addopts = "--strict-markers --ignore=tests/fixtures"
 markers = ["ac(id): acceptance criterion from the E01 spec that this test covers"]
 xfail_strict = true
 
