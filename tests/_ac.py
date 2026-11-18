@@ -7,6 +7,7 @@ epic's as "<EPIC>-AC-nn", for example "E05-AC-04".
 
 from __future__ import annotations
 
+import os
 import re
 from collections.abc import Set
 from pathlib import Path
