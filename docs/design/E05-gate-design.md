@@ -57,10 +57,12 @@ pyproject.toml           # mypy_path and pytest pythonpath include kit/.factory/
 | Task | Slice | ACs |
 | --- | --- | --- |
 | T1 | Config keys and list type in `install.py check`; AC traceability across both specs | AC-20, AC-23 (part) |
-| T2 | Gate CLI, settings, profile load, validation and selection, report text and JSON, exit codes | AC-01 to AC-07, AC-18, AC-19 |
-| T3 | Running checks: run-all, no shell, not found, timeout, purity, determinism | AC-08 to AC-11, AC-16, AC-17 |
+| T2 | Gate CLI, settings, profile load, validation and selection, basic running (run-all, no shell), report text and JSON, exit codes | AC-01 to AC-09, AC-18, AC-19 |
+| T3 | Hardened running: not found, timeout, purity, determinism | AC-10, AC-11, AC-16, AC-17 |
 | T4 | Thresholds, changed files, mutation skip, missing base ref | AC-12 to AC-15 |
 | T5 | Ship in the kit, install the kit into this repo, quality bar | AC-21 to AC-23 |
+
+*Slice change, 17 Nov 2026:* AC-08 and AC-09 moved from T3 to T2. Exit code 1 (AC-03) can't be tested without running commands, and moving them avoids a T3 slice whose tests would pass before any code is written. AC-21 (the gate ships in the kit) also moved to T2. ADR 0007 puts `gate.py` in the kit, so it ships from its first commit, and E01's exact-layout tests have to expect it. T5 keeps AC-22 and AC-23.
 
 ## Risks
 

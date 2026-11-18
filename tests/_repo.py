@@ -13,7 +13,8 @@ from tests._ac import REPO_ROOT
 INSTALL_PY = REPO_ROOT / "install.py"
 KIT_VERSION = (REPO_ROOT / "kit" / "VERSION").read_text(encoding="utf-8").strip()
 
-# Spec "Target layout" plus the files ADR 0004 (.gitattributes) and ADR 0005 (.gitignore) add.
+# E01 spec "Target layout" plus the files ADR 0004 (.gitattributes) and ADR 0005 (.gitignore)
+# add, plus the gate engine E05 AC-21 ships in .factory/gates/ (replacing its .gitkeep).
 KIT_FILES = frozenset(
     {
         ".factory/.gitattributes",
@@ -21,7 +22,8 @@ KIT_FILES = frozenset(
         ".factory/agents/.gitkeep",
         ".factory/skills/.gitkeep",
         ".factory/standards/.gitkeep",
-        ".factory/gates/.gitkeep",
+        ".factory/gates/gate.py",
+        ".factory/gates/profiles/.gitkeep",
         ".factory/workflow/.gitkeep",
         ".factory/adapters/.gitkeep",
     }

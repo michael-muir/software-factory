@@ -25,7 +25,7 @@ from tests._repo import (
 
 AGENTS = ".factory/agents/.gitkeep"
 SKILLS = ".factory/skills/.gitkeep"
-GATES = ".factory/gates/.gitkeep"
+GATES = ".factory/gates/profiles/.gitkeep"
 ADAPTERS = ".factory/adapters/.gitkeep"
 STANDARDS = ".factory/standards/.gitkeep"
 NEW_KIT_FILE = ".factory/workflow/pipeline.md"

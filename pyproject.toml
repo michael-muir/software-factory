@@ -24,6 +24,9 @@ line-length = 100
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF"]
 
+[tool.ruff.lint.isort]
+known-first-party = ["factory_installer", "gate", "tests"]
+
 [tool.ruff.lint.per-file-ignores]
 # The launcher must parse on old Pythons (ADR 0002): no f-strings or annotations.
 "install.py" = ["UP"]
@@ -31,14 +34,16 @@ select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF"]
 [tool.mypy]
 python_version = "3.11"
 strict = true
-files = ["factory_installer", "tests"]
+mypy_path = "kit/.factory/gates"
+files = ["factory_installer", "tests", "kit/.factory/gates/gate.py"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["kit/.factory/gates"]
 addopts = "--strict-markers"
 markers = ["ac(id): acceptance criterion from the E01 spec that this test covers"]
 xfail_strict = true
 
 [tool.coverage.run]
 branch = true
-source = ["factory_installer"]
+source = ["factory_installer", "kit/.factory/gates"]
