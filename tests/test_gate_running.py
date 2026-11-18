@@ -116,6 +116,7 @@ def test_a_check_over_its_timeout_fails_and_the_gate_goes_on(
     assert _check(report, "coverage")["status"] == "pass"
 
 
+@pytest.mark.slow
 @pytest.mark.ac("E05-AC-11")
 def test_a_timeout_kills_the_whole_process_tree(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]

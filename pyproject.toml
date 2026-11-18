@@ -42,7 +42,10 @@ files = ["factory_installer", "tests", "kit/.factory/gates/gate.py", "kit/.facto
 testpaths = ["tests"]
 pythonpath = ["kit/.factory/gates", "kit/.factory/gates/tools"]
 addopts = "--strict-markers --ignore=tests/fixtures"
-markers = ["ac(id): acceptance criterion from the E01 spec that this test covers"]
+markers = [
+    "ac(id): acceptance criterion from a spec in docs/specs that this test covers",
+    "slow: runs real tools through the gate; skip locally with -m \"not slow\"",
+]
 xfail_strict = true
 
 [tool.coverage.run]
