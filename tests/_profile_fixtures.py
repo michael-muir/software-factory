@@ -13,6 +13,7 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 from collections.abc import Mapping
 from pathlib import Path
 
@@ -200,23 +201,39 @@ def node_available() -> bool:
 
 
 def ts_node_modules() -> Path:
-    """npm ci once per lockfile hash into a cache outside the repo (ADR 0011)."""
+    """npm ci once per lockfile hash into a cache outside the repo (ADR 0011).
+
+    Safe under pytest-xdist: each worker installs into its own staging directory and renames
+    it into place; a worker that loses the race uses the winner's install.
+    """
     lock = (TS_REF / "package-lock.json").read_bytes()
     digest = hashlib.sha256(lock).hexdigest()[:12]
     cache = Path.home() / ".cache" / "software-factory" / f"ts-js-ref-{digest}"
-    done = cache / ".complete"
-    if not done.is_file():
-        shutil.rmtree(cache, ignore_errors=True)
-        cache.mkdir(parents=True)
-        for name in ("package.json", "package-lock.json"):
-            shutil.copy2(TS_REF / name, cache / name)
-        npm = shutil.which("npm")
-        assert npm is not None
-        result = subprocess.run(
-            [npm, "ci", "--no-audit", "--no-fund"], cwd=cache, capture_output=True, text=True
-        )
-        assert result.returncode == 0, f"npm ci failed:\n{result.stdout}{result.stderr}"
-        done.write_text("ok\n", encoding="utf-8")
+    if not (cache / ".complete").is_file():
+        cache.parent.mkdir(parents=True, exist_ok=True)
+        staging = Path(tempfile.mkdtemp(prefix=f"{cache.name}-", dir=cache.parent))
+        try:
+            for name in ("package.json", "package-lock.json"):
+                shutil.copy2(TS_REF / name, staging / name)
+            npm = shutil.which("npm")
+            assert npm is not None
+            result = subprocess.run(
+                [npm, "ci", "--no-audit", "--no-fund"],
+                cwd=staging,
+                capture_output=True,
+                text=True,
+            )
+            assert result.returncode == 0, f"npm ci failed:\n{result.stdout}{result.stderr}"
+            (staging / ".complete").write_text("ok\n", encoding="utf-8")
+            if cache.exists() and not (cache / ".complete").is_file():
+                shutil.rmtree(cache, ignore_errors=True)  # a half-built cache from older code
+            try:
+                staging.rename(cache)
+            except OSError:
+                if not (cache / ".complete").is_file():
+                    raise
+        finally:
+            shutil.rmtree(staging, ignore_errors=True)
     return cache / "node_modules"
 
 

@@ -78,3 +78,29 @@ The tests assert two things for every seed: its check fails, and every other che
 - **Stryker's sandbox.** Stryker copies the project into `.stryker-tmp/` inside the repo while it runs, and deletes it afterwards. The TS/JS profile documents that this must be git-ignored. The purity check then sees no change.
 - **Network for `npm ci`.** The first run on a machine downloads Vitest, ESLint, Prettier, TypeScript and Stryker, roughly 150 MB. Later runs use the cache.
 - **This repo's own mutation budget.** With `max-mutants = 50`, a `gate.py` change costs about 50 mutants × 5–35 s, roughly 5 to 25 minutes. That fits in 1800 s, but it's slow for a local gate. T3 records the real timing.
+
+## Dogfooding results (T3, 18 Nov 2026)
+
+**This repo's settings** (`pyproject.toml`):
+
+```toml
+[tool.software-factory.mutation]
+max-mutants = 50
+test-args = ["-m", "not slow"]
+```
+
+**Parallel tests (product owner decision during T3):**
+- **Why:** on a clean `main`, the gate passed, but its tests check took 573 s against E05's 600 s default.
+- **What changed:** this repo now runs pytest with pytest-xdist (`-n auto`), and coverage measures the workers with `patch = ["subprocess"]`. `coverage report` combines the workers' data files on its own.
+- **Stale data:** that combine also picks up data files left over from earlier runs, which silently raised coverage in a probe from 62% to 75%. So `tests/conftest.py` deletes old `.coverage` files when a coverage run starts, before any worker spawns.
+- **Shared npm cache:** the TS/JS `npm ci` cache now installs into a staging directory and renames it into place, so parallel workers can't race on a cold cache.
+
+| Run | Result | Time |
+| --- | --- | --- |
+| Gate on clean `main`, serial tests | exit 0, mutation skipped (no changed files) | 9 min 34 s (tests 573 s) |
+| Gate on the T3 branch, parallel tests | exit 0, mutation: no source files to mutate | 3 min 35 s (tests 213 s) |
+| `mutate_python.py` on `factory_installer/report.py` | 25 of 36 killed = 69.4% | 8 min 20 s, about 14 s per mutant |
+
+So a change to a source file costs about 12 minutes of mutation at the 50-mutant cap. That's inside the 1800 s timeout, but still slow for a local loop.
+
+**Kit follow-up:** any Python project that combines the profile with pytest-xdist meets the same stale-data trap, because the coverage check is `coverage report` with no `coverage erase` beforehand. This is worth fixing in the kit later.
