@@ -45,6 +45,10 @@ We win by shipping the trust layer first — gates, state and roles as plain fil
 | Default budgets | $15 per job, $120 per day; warn at 80%, halt at 100% |
 | Review round limit | 3 rounds, then a human decides; configurable per track |
 | Telemetry | None by default; opt-in local metrics only |
+| Package and env manager | uv |
+| Python format, lint, types | ruff (format + lint), mypy --strict; also the Python profile defaults |
+| Python tests, coverage, mutation | pytest, coverage.py, mutmut |
+| Dependency policy | Stdlib-only core (install.py, gate.py, run.py); extras such as the dashboard and connectors may add deps |
 
 **Target users** (the blueprint's three human roles)
 
