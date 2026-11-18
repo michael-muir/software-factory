@@ -190,8 +190,9 @@ TS_SEEDS: dict[str, dict[str, str]] = {
     },
 }
 
-# Spec AC-12: the tests seed also fails coverage and mutation, which need a green suite.
-TS_ALSO_FAILS = {"tests": {"coverage", "mutation"}}
+# Spec AC-12: tests also fails coverage and mutation (they need a green suite);
+# types also fails build (the build compiles with tsc, which type-checks).
+TS_ALSO_FAILS = {"tests": {"coverage", "mutation"}, "types": {"build"}}
 
 
 def node_available() -> bool:

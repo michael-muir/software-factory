@@ -105,7 +105,11 @@ Give the E05 gate real work to do. Two profiles, Python and TS/JS, turn the gate
 
   For each variant, the gate exits 1, that check fails, and every other check passes or is n/a.
 - **AC-11** `tests/fixtures/ts-js-ref/` is a small Vitest project with a committed `package-lock.json`. Installed with `npm ci`, it passes every TS/JS check, and the gate exits 0.
-- **AC-12** Each TS/JS check has a seeded-bug variant: format, lint, types, build, tests, coverage and mutation. Every variant breaks its own check and nothing else, with one exception. The **tests** variant also fails coverage and mutation, because both need a green test suite: the coverage check reruns the tests, and Stryker refuses to start when its initial test run fails. *(Change, 17 Nov 2026, product owner decision during T2.)*
+- **AC-12** Each TS/JS check has a seeded-bug variant: format, lint, types, build, tests, coverage and mutation. Every variant breaks its own check and nothing else, with two exceptions:
+  - The **tests** variant also fails coverage and mutation, because both need a green test suite: the coverage check reruns the tests, and Stryker refuses to start when its initial test run fails.
+  - The **types** variant also fails build, because the build compiles with `tsc`, which type-checks.
+
+  *(Changes, 17 Nov 2026, product owner decisions during T2.)*
 - **AC-13** The TS/JS fixture tests are skipped, with a stated reason, only when `node` or `npm` is not on PATH. When Node is present, a failed `npm ci` is a test failure, not a skip.
 
 **Dogfooding**
