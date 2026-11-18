@@ -55,3 +55,18 @@ def test_e06_spec_defines_ac_01_to_ac_15_plus_05b() -> None:
 def test_every_e06_ac_has_a_test(request: pytest.FixtureRequest) -> None:
     missing = spec_ac_ids("E06") - request.config.stash[COLLECTED_AC_IDS]
     assert not missing, f"E06 ACs with no test: {sorted(missing)}"
+
+
+@pytest.mark.ac("E07-AC-17")
+def test_e07_spec_defines_ac_01_to_ac_17() -> None:
+    assert spec_ac_ids("E07") == {f"E07-AC-{n:02d}" for n in range(1, 18)}
+
+
+@pytest.mark.ac("E07-AC-17")
+@pytest.mark.xfail(
+    strict=True,
+    reason="E07 is built in slices T1-T4; full AC coverage is enforced from E07/T4 on",
+)
+def test_every_e07_ac_has_a_test(request: pytest.FixtureRequest) -> None:
+    missing = spec_ac_ids("E07") - request.config.stash[COLLECTED_AC_IDS]
+    assert not missing, f"E07 ACs with no test: {sorted(missing)}"

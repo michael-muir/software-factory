@@ -27,6 +27,8 @@ SPEC_DEFAULTS = {
         "mutation_scope": "changed-lines",
         "profiles": [],
         "base_ref": "main",
+        "commit_checks": ["format", "lint", "types"],
+        "python_command": ["python"],
     },
     "models": {"cross_model_vendor": "openai"},
     "telemetry": {"enabled": False},
