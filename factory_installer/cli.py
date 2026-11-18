@@ -1,4 +1,8 @@
-"""Command-line entry point for `python install.py` (E01)."""
+"""Command-line entry point for `python install.py` (E01).
+
+python install.py [PATH] [--dry-run] [--force] [--json]
+python install.py check [PATH]
+"""
 
 from __future__ import annotations
 
@@ -8,19 +12,35 @@ import tomllib
 from collections.abc import Sequence
 from pathlib import Path
 
-from factory_installer import config_schema
+from factory_installer import config_schema, manifest
+from factory_installer.apply import apply, write_file
+from factory_installer.kit import KIT_ROOT, load_kit
+from factory_installer.plan import manifest_files, plan
+from factory_installer.report import Report
+from factory_installer.target import PathEscapeError, current_hashes, ensure_inside, find_git_root
 
 CONFIG_RELPATH = Path(".agentic") / "config.toml"
 
 
-def _parser() -> argparse.ArgumentParser:
+def _install_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="install.py",
-        description="Install the Software Factory kit into a git repository.",
+        description="Install the Software Factory kit into a git repository. "
+        "Use 'install.py check [PATH]' to validate .agentic/config.toml.",
     )
-    commands = parser.add_subparsers(dest="command")
-    check = commands.add_parser("check", help="validate .agentic/config.toml")
-    check.add_argument("path", nargs="?", default=".", help="repository root (default: .)")
+    parser.add_argument("path", nargs="?", default=".", help="target directory (default: .)")
+    parser.add_argument("--dry-run", action="store_true", help="show the plan; write nothing")
+    parser.add_argument("--force", action="store_true", help="overwrite conflicting kit files")
+    parser.add_argument("--json", action="store_true", help="print the report as JSON")
+    parser.add_argument("--kit", type=Path, default=KIT_ROOT, help=argparse.SUPPRESS)
+    return parser
+
+
+def _check_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="install.py check", description="Validate .agentic/config.toml."
+    )
+    parser.add_argument("path", nargs="?", default=".", help="repository root (default: .)")
     return parser
 
 
@@ -52,11 +72,44 @@ def run_check(repo: Path) -> int:
     return 0
 
 
+def run_install(target: Path, *, kit_root: Path, dry_run: bool, force: bool, as_json: bool) -> int:
+    if not target.is_dir():
+        print(f"{target}: not a directory; nothing written", file=sys.stderr)
+        return 1
+    if find_git_root(target) is None:
+        print(f"{target}: not inside a git working tree; nothing written", file=sys.stderr)
+        return 1
+
+    kit = load_kit(kit_root)
+    try:
+        ensure_inside(target, [*kit.files, manifest.MANIFEST_RELPATH])
+    except PathEscapeError as exc:
+        print(f"{exc}. Refusing to write outside {target}; nothing written.", file=sys.stderr)
+        return 1
+
+    steps = plan(kit, current_hashes(target, kit.files), force=force)
+    if not dry_run:
+        apply(target, steps)
+        new_manifest = manifest.Manifest(kit.version, manifest_files(steps)).to_bytes()
+        manifest_path = target / manifest.MANIFEST_RELPATH
+        if not manifest_path.is_file() or manifest_path.read_bytes() != new_manifest:
+            write_file(target, manifest.MANIFEST_RELPATH, new_manifest)
+
+    report = Report.from_steps(kit.version, str(target), dry_run, steps)
+    print(report.to_json() if as_json else report.to_text())
+    return 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
-    args = _parser().parse_args(argv)
-    if args.command == "check":
-        return run_check(Path(args.path))
-    print(
-        "install.py: installing the kit arrives in E01/T3; only 'check' works yet.", file=sys.stderr
+    args_list = list(sys.argv[1:] if argv is None else argv)
+    if args_list[:1] == ["check"]:
+        check_args = _check_parser().parse_args(args_list[1:])
+        return run_check(Path(check_args.path))
+    args = _install_parser().parse_args(args_list)
+    return run_install(
+        Path(args.path),
+        kit_root=args.kit,
+        dry_run=args.dry_run,
+        force=args.force,
+        as_json=args.json,
     )
-    return 2
