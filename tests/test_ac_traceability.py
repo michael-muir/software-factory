@@ -19,10 +19,6 @@ def test_every_ac_marker_names_an_ac_in_the_spec(request: pytest.FixtureRequest)
 
 
 @pytest.mark.ac("AC-23")
-@pytest.mark.xfail(
-    strict=True,
-    reason="E01 is built in slices T1-T5; full AC coverage is enforced from T5 on",
-)
 def test_every_spec_ac_has_a_test(request: pytest.FixtureRequest) -> None:
     missing = spec_ac_ids() - request.config.stash[COLLECTED_AC_IDS]
     assert not missing, f"spec ACs with no test: {sorted(missing)}"
