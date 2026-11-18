@@ -46,4 +46,4 @@ xfail_strict = true
 
 [tool.coverage.run]
 branch = true
-source = ["factory_installer"]
+source = ["factory_installer", "kit/.factory/gates"]
