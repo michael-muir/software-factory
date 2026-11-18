@@ -127,9 +127,9 @@ enabled = false
 
 **Re-runs and upgrades**
 
-- **AC-12** Running the same kit version twice changes no files. The second run reports "up to date", and `git status` is clean afterwards.
+- **AC-12** Running the same kit version twice changes no files. The second run reports "up to date", and `git status` is clean afterwards. Once the kit is installed, existing `.agentic/` files are reported as unchanged, not skipped (ADR 0006).
 - **AC-13** Running a newer kit version replaces each kit file whose current hash still matches the manifest, and reports it as updated.
-- **AC-14** A kit file whose hash differs from the manifest (edited locally) is left unchanged and reported as "kept (modified locally)". The new version is written beside it as `<name>.factory-new` so the user can merge it.
+- **AC-14** A kit file whose hash differs from the manifest (edited locally) is left unchanged and reported as "kept (modified locally)". If the new kit changed that file, the new version is written beside it as `<name>.factory-new` so the user can merge it. If the kit did not change it, no `.factory-new` is written (ADR 0006).
 - **AC-15** A kit file dropped from the newer kit is deleted if untouched, or kept and reported if modified.
 - **AC-16** An upgrade never rewrites existing files in `.agentic/`. New state files are created only where they are missing.
 - **AC-17** After an upgrade, the manifest holds the new kit version and the hashes of the files as they now stand.
