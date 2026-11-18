@@ -85,6 +85,27 @@ cross_model_vendor = "openai"
 enabled = false
 ```
 
+### Validation rules (confirmed 17 Nov 2026, during T2)
+
+| Key | Type | Rule |
+| --- | --- | --- |
+| `schema_version` | integer | must be 1 |
+| `factory.kit_version` | string | semver, e.g. `0.1.0` or `1.2.0-rc.1` |
+| `hosting.mode` | string | `local` or `cloud` |
+| `budgets.per_job_usd` | number | > 0, and ≤ `per_day_usd` |
+| `budgets.per_day_usd` | number | > 0 |
+| `budgets.warn_at` | number | > 0, and ≤ `halt_at` |
+| `budgets.halt_at` | number | ≤ 1 |
+| `review.max_rounds` | integer | 1 to 10 |
+| `gates.mutation_threshold` | number | 0 to 1 |
+| `gates.mutation_scope` | string | `changed-lines` or `all` |
+| `models.cross_model_vendor` | string | not empty |
+| `telemetry.enabled` | boolean | — |
+
+- A number is an integer or a float, but never a boolean.
+- A key that is missing is allowed: its default applies, and `check` lists it as information while still exiting 0 (assumption 3).
+- An unknown key or unknown section is an error.
+
 ## Acceptance criteria
 
 **Running the installer**

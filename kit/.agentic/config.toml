@@ -1,0 +1,29 @@
+# Software Factory project configuration.
+# Validate with: python install.py check
+
+schema_version = 1
+
+[factory]
+kit_version = "0.1.0"
+
+[hosting]
+mode = "local"  # "local" | "cloud"
+
+[budgets]
+per_job_usd = 15  # > 0 and <= per_day_usd
+per_day_usd = 120  # > 0
+warn_at = 0.8  # fraction of budget; > 0 and <= halt_at
+halt_at = 1.0  # fraction of budget; <= 1
+
+[review]
+max_rounds = 3  # 1 to 10
+
+[gates]
+mutation_threshold = 0.6  # 0 to 1
+mutation_scope = "changed-lines"  # "changed-lines" | "all"
+
+[models]
+cross_model_vendor = "openai"
+
+[telemetry]
+enabled = false
