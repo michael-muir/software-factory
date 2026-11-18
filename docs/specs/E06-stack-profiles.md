@@ -39,8 +39,8 @@ Give the E05 gate real work to do. Two profiles, Python and TS/JS, turn the gate
 
 | Check | Command |
 | --- | --- |
-| format | `ruff format --check .` |
-| lint | `ruff check .` |
+| format | `ruff format --check --extend-exclude ./.factory .` |
+| lint | `ruff check --extend-exclude ./.factory .` |
 | types | `mypy` (targets come from the project's mypy config) |
 | build | — (n/a) |
 | tests | `coverage run -m pytest` |
@@ -58,6 +58,8 @@ Give the E05 gate real work to do. Two profiles, Python and TS/JS, turn the gate
 | tests | `npx --no-install vitest run` |
 | coverage | `npx --no-install vitest run --coverage --coverage.thresholds.lines={coverage_percent}` |
 | mutation | `python .factory/gates/tools/mutate_ts.py --min {mutation_percent} {changed_files}` (timeout 1800 s) |
+
+**Change, 17 Nov 2026 (found in T1):** ruff now runs with `--extend-exclude ./.factory`. Without it, a project's format and lint checks also judged the installed kit by the project's ruff settings. The reference fixture, with ruff's default 88-character lines, failed both checks on the kit's own files. `./.factory` excludes only the root kit, so this repo's kit source under `kit/.factory/` is still checked.
 
 ## Acceptance criteria
 

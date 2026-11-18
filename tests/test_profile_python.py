@@ -52,8 +52,8 @@ def test_python_profile_matches_the_spec() -> None:
     assert isinstance(checks, dict)
     commands = {name: table["command"] for name, table in checks.items()}
     assert commands == {
-        "format": ["ruff", "format", "--check", "."],
-        "lint": ["ruff", "check", "."],
+        "format": ["ruff", "format", "--check", "--extend-exclude", "./.factory", "."],
+        "lint": ["ruff", "check", "--extend-exclude", "./.factory", "."],
         "types": ["mypy"],
         "tests": ["coverage", "run", "-m", "pytest"],
         "coverage": ["coverage", "report", "--fail-under={coverage_percent}"],
