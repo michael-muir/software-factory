@@ -18,7 +18,6 @@ from tests._ac import REPO_ROOT
 
 SPEC_DEFAULTS = {
     "schema_version": 1,
-    "factory": {"kit_version": "0.1.0"},
     "hosting": {"mode": "local"},
     "budgets": {"per_job_usd": 15, "per_day_usd": 120, "warn_at": 0.8, "halt_at": 1.0},
     "review": {"max_rounds": 3},
@@ -122,7 +121,7 @@ def test_check_defaults_to_current_directory(
             "must",
         ),
         ('mode = "local"', 'mode = "hybrid"', "hosting.mode", "must"),
-        ('kit_version = "0.1.0"', 'kit_version = "v1"', "factory.kit_version", "must"),
+        ("[hosting]", '[factory]\nkit_version = "0.1.0"\n\n[hosting]', "factory", "unknown"),
         (
             'cross_model_vendor = "openai"',
             'cross_model_vendor = ""',
