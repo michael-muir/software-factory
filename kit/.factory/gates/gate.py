@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import fnmatch
 import hashlib
 import json
 import os
@@ -355,15 +356,103 @@ def run_check(root: Path, profile: Profile, spec: CheckSpec) -> Result:
     return result
 
 
-def run_profiles(root: Path, profiles: list[Profile]) -> list[Result]:
+# --- placeholders and changed files -------------------------------------------------------------
+
+
+class BaseRefError(Exception):
+    """gates.base_ref does not resolve; only checks that need changed files fail (AC-15)."""
+
+
+def _git_paths(root: Path, *args: str) -> list[str] | None:
+    completed = subprocess.run(["git", *args], cwd=root, capture_output=True, check=False)
+    if completed.returncode != 0:
+        return None
+    return [p.decode("utf-8", errors="surrogateescape") for p in completed.stdout.split(b"\0") if p]
+
+
+def changed_files(root: Path, base_ref: str) -> list[str]:
+    """Files changed since merge-base(base_ref, HEAD): committed, staged, unstaged and untracked
+    (not ignored), minus deletions. Sorted repo-relative posix paths (AC-13)."""
+    merge_base = subprocess.run(
+        ["git", "merge-base", base_ref, "HEAD"], cwd=root, capture_output=True, text=True
+    )
+    if merge_base.returncode != 0:
+        raise BaseRefError(f"base ref '{base_ref}' not found (gates.base_ref)")
+    base = merge_base.stdout.strip()
+    diffed = _git_paths(root, "diff", "--name-only", "-z", "--diff-filter=d", base) or []
+    untracked = _git_paths(root, "ls-files", "--others", "--exclude-standard", "-z") or []
+    return sorted({p for p in (*diffed, *untracked) if (root / p).is_file()})
+
+
+def tracked_files(root: Path) -> list[str]:
+    return sorted(p for p in _git_paths(root, "ls-files", "-z") or [] if (root / p).is_file())
+
+
+class FileSource:
+    """Works out the files for {changed_files} once, only if a command asks for them."""
+
+    def __init__(self, root: Path, settings: Settings) -> None:
+        self.root = root
+        self.settings = settings
+        self.changed: list[str] | None = None
+        self._candidates: list[str] | None = None
+
+    def candidates(self) -> list[str]:
+        if self._candidates is None:
+            if self.settings.mutation_scope == "all":
+                self._candidates = tracked_files(self.root)
+            else:
+                self.changed = changed_files(self.root, self.settings.base_ref)
+                self._candidates = self.changed
+        return self._candidates
+
+
+def _matches(path: str, globs: list[str]) -> bool:
+    return any(fnmatch.fnmatchcase(path, pattern) for pattern in globs)
+
+
+def expand(command: list[str], values: dict[str, str], files: list[str]) -> list[str]:
+    """Fill threshold placeholders in every argument; splice files in for {changed_files}."""
+    expanded: list[str] = []
+    for arg in command:
+        if arg == CHANGED_FILES:
+            expanded.extend(files)
+            continue
+        for placeholder, value in values.items():
+            arg = arg.replace(placeholder, value)
+        expanded.append(arg)
+    return expanded
+
+
+def run_profiles(
+    root: Path, profiles: list[Profile], settings: Settings, files: FileSource
+) -> list[Result]:
+    values = {
+        "{coverage_percent}": str(round(settings.coverage_threshold * 100)),
+        "{mutation_percent}": str(round(settings.mutation_threshold * 100)),
+    }
     results: list[Result] = []
     for profile in profiles:
         for check in CHECK_ORDER:
             spec = profile.checks.get(check)
             if spec is None:
                 results.append(Result(profile.name, check, "n/a", "not defined by the profile"))
-            else:
-                results.append(run_check(root, profile, spec))
+                continue
+            selected: list[str] = []
+            if CHANGED_FILES in spec.command:
+                try:
+                    candidates = files.candidates()
+                except BaseRefError as exc:
+                    results.append(
+                        Result(profile.name, check, "fail", str(exc), command=spec.command)
+                    )
+                    continue
+                selected = [p for p in candidates if _matches(p, profile.mutation_paths)]
+                if not selected:
+                    results.append(Result(profile.name, check, "skipped", "no changed files"))
+                    continue
+            argv = expand(spec.command, values, selected)
+            results.append(run_check(root, profile, CheckSpec(spec.name, argv, spec.timeout_s)))
     return results
 
 
@@ -399,7 +488,8 @@ class Report:
         for r in self.results:
             took = f"{r.duration_s:.2f}s" if r.duration_s is not None else "-"
             row = f"  {r.profile:<{width}}  {r.check:<8}  {r.status:<7}  {took:>8}"
-            lines.append(f"{row}  {r.reason}".rstrip() if r.status == "fail" else row)
+            shows_reason = r.status in ("fail", "skipped")
+            lines.append(f"{row}  {r.reason}".rstrip() if shows_reason else row)
             if r.status == "fail" and r.output_tail:
                 lines += [f"      | {line}" for line in r.output_tail.splitlines()]
         lines.append(self.verdict.upper())
@@ -436,8 +526,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     except GateError as exc:
         print(f"gate: {exc}", file=sys.stderr)
         return 2
-    results = run_profiles(root, selected)
-    report = Report(str(root), settings.base_ref, [p.name for p in selected], [], results)
+    files = FileSource(root, settings)
+    results = run_profiles(root, selected, settings, files)
+    names = [p.name for p in selected]
+    report = Report(str(root), settings.base_ref, names, files.changed or [], results)
     print(report.to_json() if args.json else report.to_text())
     return 0 if report.verdict == "pass" else 1
 
