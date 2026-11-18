@@ -1,0 +1,3 @@
+# New kit versions of files you edited locally (ADR 0005).
+# The installer lists them after an upgrade: merge each one, then delete it.
+*.factory-new

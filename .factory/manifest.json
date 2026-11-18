@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "kit_version": "0.1.0",
+  "files": {
+    ".factory/.gitattributes": "a79691a93b46e49ce460c26ef22afcc03d6eca1e63bf2edbc20e96159510f6c9",
+    ".factory/.gitignore": "a8115628a5707f002d62bcb965327fc7b13352c7a601dcccd2d41e90e1ccdc49",
+    ".factory/adapters/.gitkeep": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    ".factory/agents/.gitkeep": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    ".factory/gates/gate.py": "795d8c3e81470a6f2b9f167e3bdde61faf1ee1ac0a3ac01eb2d8d2b49b6ced97",
+    ".factory/gates/profiles/.gitkeep": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    ".factory/skills/.gitkeep": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    ".factory/standards/.gitkeep": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    ".factory/workflow/.gitkeep": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "deleted": []
+}
