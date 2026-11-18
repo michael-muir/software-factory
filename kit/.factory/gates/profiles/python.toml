@@ -28,6 +28,7 @@ command = ["mypy"]
 
 [checks.tests]
 command = ["coverage", "run", "-m", "pytest"]
+timeout_s = 1200  # slow CI runners (E07/T4: Windows needed more than 600 s)
 
 [checks.coverage]
 command = ["coverage", "report", "--fail-under={coverage_percent}"]

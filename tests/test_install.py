@@ -419,3 +419,25 @@ def test_json_report_matches_the_install(
         assert counts[label] == len(files.get(label, [])), label
     assert set(files["created"]) == KIT_FILES | STATE_FILES
     assert report["pending_merge"] == []
+
+
+@pytest.mark.ac("AC-06")
+@pytest.mark.ac("E07-AC-15")
+def test_kit_bytecode_caches_are_never_installed(tmp_path: Path) -> None:
+    # Found by this repo's first CI run (E07/T4): importing the kit's gate during tests writes
+    # __pycache__ into the kit source, and the installer must not ship it.
+    from factory_installer.kit import load_kit
+    from tests._kits import make_kit
+
+    kit_root = make_kit(
+        tmp_path,
+        "9.9.9",
+        {
+            ".factory/gates/__pycache__/gate.cpython-312.pyc": b"\x00pyc",
+            ".factory/gates/tools/__pycache__/mutate_python.cpython-312.pyc": b"\x00pyc",
+            ".factory/gates/stray.pyc": b"\x00pyc",
+        },
+    )
+    files = load_kit(kit_root).files
+    assert not [rel for rel in files if "__pycache__" in rel or rel.endswith(".pyc")]
+    assert ".factory/gates/gate.py" in files
