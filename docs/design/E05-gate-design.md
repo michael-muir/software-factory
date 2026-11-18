@@ -62,7 +62,7 @@ pyproject.toml           # mypy_path and pytest pythonpath include kit/.factory/
 | T4 | Thresholds, changed files, mutation skip, missing base ref | AC-12 to AC-15 |
 | T5 | Ship in the kit, install the kit into this repo, quality bar | AC-21 to AC-23 |
 
-*Slice change, 17 Nov 2026:* AC-08 and AC-09 moved from T3 to T2. Exit code 1 (AC-03) can't be tested without running commands, and moving them avoids a T3 slice whose tests would pass before any code is written.
+*Slice change, 17 Nov 2026:* AC-08 and AC-09 moved from T3 to T2. Exit code 1 (AC-03) can't be tested without running commands, and moving them avoids a T3 slice whose tests would pass before any code is written. AC-21 (the gate ships in the kit) also moved to T2. ADR 0007 puts `gate.py` in the kit, so it ships from its first commit, and E01's exact-layout tests have to expect it. T5 keeps AC-22 and AC-23.
 
 ## Risks
 
