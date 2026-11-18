@@ -10,7 +10,12 @@ error stopped the gate before any check ran. Standard library only (ADR 0007).
 from __future__ import annotations
 
 import argparse
+import contextlib
+import hashlib
 import json
+import os
+import shutil
+import signal
 import subprocess
 import sys
 import time
@@ -245,27 +250,109 @@ def _tail(output: bytes) -> str:
     return "\n".join(lines[-OUTPUT_TAIL_LINES:])
 
 
-def run_check(root: Path, profile: Profile, spec: CheckSpec) -> Result:
-    started = time.monotonic()
-    completed = subprocess.run(
-        spec.command,
+def snapshot(root: Path) -> dict[str, str]:
+    """Status code and content hash of every changed or untracked, non-ignored file (ADR 0008).
+
+    Comparing two snapshots names exactly the paths a check touched: new or changed status
+    entries, and content changes to files that were already modified or untracked.
+    """
+    raw = subprocess.run(
+        ["git", "status", "--porcelain=v1", "-z", "--untracked-files=all"],
         cwd=root,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
+        capture_output=True,
         check=False,
-    )
-    duration = round(time.monotonic() - started, 3)
-    passed = completed.returncode == 0
-    return Result(
-        profile=profile.name,
-        check=spec.name,
-        status="pass" if passed else "fail",
-        reason="" if passed else f"exited with code {completed.returncode}",
-        exit_code=completed.returncode,
-        duration_s=duration,
-        command=spec.command,
-        output_tail=_tail(completed.stdout),
-    )
+    ).stdout
+    entries = raw.split(b"\0")
+    state: dict[str, str] = {}
+    index = 0
+    while index < len(entries):
+        entry = entries[index]
+        index += 1
+        if len(entry) < 4:
+            continue
+        code = entry[:2].decode("ascii", errors="replace")
+        rel = entry[3:].decode("utf-8", errors="surrogateescape")
+        if code[0] in "RC":
+            index += 1  # the next entry is the rename/copy source
+        path = root / rel
+        digest = hashlib.sha256(path.read_bytes()).hexdigest() if path.is_file() else "-"
+        state[rel] = f"{code}:{digest}"
+    return state
+
+
+def _changed(before: dict[str, str], after: dict[str, str]) -> list[str]:
+    return sorted(p for p in before.keys() | after.keys() if before.get(p) != after.get(p))
+
+
+def _kill_tree(process: subprocess.Popen[bytes]) -> None:
+    if sys.platform == "win32":
+        subprocess.run(
+            ["taskkill", "/T", "/F", "/PID", str(process.pid)], capture_output=True, check=False
+        )
+    else:
+        with contextlib.suppress(ProcessLookupError):
+            os.killpg(process.pid, signal.SIGKILL)
+    with contextlib.suppress(OSError):
+        process.kill()
+
+
+def _execute(argv: list[str], root: Path, timeout_s: int) -> tuple[int | None, bytes, bool]:
+    """Run argv from root without a shell; on timeout kill the whole process tree."""
+    if sys.platform == "win32":
+        process = subprocess.Popen(
+            argv,
+            cwd=root,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            creationflags=subprocess.CREATE_NEW_PROCESS_GROUP,
+        )
+    else:
+        process = subprocess.Popen(
+            argv,
+            cwd=root,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
+    try:
+        output, _ = process.communicate(timeout=timeout_s)
+        return process.returncode, output, False
+    except subprocess.TimeoutExpired:
+        _kill_tree(process)
+        try:
+            output, _ = process.communicate(timeout=10)
+        except subprocess.TimeoutExpired:
+            output = b""
+        return None, output, True
+
+
+def run_check(root: Path, profile: Profile, spec: CheckSpec) -> Result:
+    result = Result(profile.name, spec.name, "fail", command=list(spec.command))
+    program = shutil.which(spec.command[0], path=os.environ.get("PATH"))
+    if program is None:
+        result.reason = f"command not found: {spec.command[0]}"
+        return result
+    argv = [program, *spec.command[1:]]
+    result.command = argv
+
+    before = snapshot(root)
+    started = time.monotonic()
+    exit_code, output, timed_out = _execute(argv, root, spec.timeout_s)
+    result.duration_s = round(time.monotonic() - started, 3)
+    result.exit_code = exit_code
+    result.output_tail = _tail(output)
+    touched = _changed(before, snapshot(root))
+
+    reasons: list[str] = []
+    if touched:
+        reasons.append("modified the repository: " + ", ".join(touched))
+    if timed_out:
+        reasons.append(f"timed out after {spec.timeout_s}s")
+    elif exit_code != 0:
+        reasons.append(f"exited with code {exit_code}")
+    result.status = "fail" if reasons else "pass"
+    result.reason = "; ".join(reasons)
+    return result
 
 
 def run_profiles(root: Path, profiles: list[Profile]) -> list[Result]:
