@@ -112,6 +112,17 @@ def test_python_profile_header_names_tools_ignores_and_how_to_run() -> None:
 
 
 @pytest.mark.ac("E06-AC-05")
+def test_the_installed_kit_is_never_mutated() -> None:
+    given = [
+        ".factory/gates/gate.py",
+        ".factory/gates/tools/mutate_python.py",
+        "calc.py",
+        "kit/.factory/gates/gate.py",
+    ]
+    assert mutate_python.select_sources(given) == ["calc.py", "kit/.factory/gates/gate.py"]
+
+
+@pytest.mark.ac("E06-AC-05")
 def test_test_files_are_never_mutated() -> None:
     given = [
         "calc.py",
