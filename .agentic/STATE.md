@@ -1,9 +1,9 @@
 +++
-phase = "test"
+phase = "design"
 track = "full"
-active_task = "REVIEW-T3"
+active_task = ""
 blockers = []
-updated = 2026-11-19T13:01:48Z
+updated = 2026-11-19T15:52:37Z
 +++
 
-E03 (agent schema and tool scoping) is done: T1 #52, T2 #53 and T3 #54 are merged, and issue #3 is closed. No task is active. The next epic is the product owner's choice: E04 (#4), E09 (#9) and E11 (#11) have their dependencies met.
+The code review is done: refactors #55, fixes #56, changed-lines mutation #57. E04 (definition-of-done templates, #4) has an approved spec: docs/specs/E04-definition-of-done.md. Next: the Architect's design note and ADRs, then slices as task files.
