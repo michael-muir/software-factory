@@ -85,10 +85,6 @@ def test_e03_spec_defines_ac_01_to_ac_14() -> None:
 
 
 @pytest.mark.ac("E03-AC-14")
-@pytest.mark.xfail(
-    strict=True,
-    reason="E03 is built in slices T1-T3; full AC coverage is enforced from E03/T3 on",
-)
 def test_every_e03_ac_has_a_test(request: pytest.FixtureRequest) -> None:
     missing = spec_ac_ids("E03") - request.config.stash[COLLECTED_AC_IDS]
     assert not missing, f"E03 ACs with no test: {sorted(missing)}"
