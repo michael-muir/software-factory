@@ -1,0 +1,6 @@
+task = "E04-T3"
+locked = 2026-11-19T16:13:21Z
+
+[[files]]
+path = "tests/test_docs_templates.py"
+sha256 = "4f74a121c99a6b3d6e207b00f79b1f3086bea3e8149f282ad82cb4c532495338"
