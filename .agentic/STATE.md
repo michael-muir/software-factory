@@ -1,9 +1,9 @@
 +++
-phase = "test"
+phase = "ship"
 track = "full"
-active_task = "E10-T3"
+active_task = ""
 blockers = []
-updated = 2026-11-19T21:08:38Z
+updated = 2026-11-19T22:08:35Z
 +++
 
-E10 (#10): spec approved, design note and ADR 0022 accepted. Built in three slices, E10-T1 to E10-T3. Resume with `python .factory/state/state.py resume`.
+E10 (skills library) is done: T1 #63, T2 #64 and T3 #65 are merged, and issue #10 is closed. No task is active. The next epic is the product owner's choice: E08 (#8), E11 (#11) and E12 (#12, now unblocked by E09 and E10) can start.
