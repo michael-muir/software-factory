@@ -476,10 +476,14 @@ class Report:
     results: list[Result]
     locked: int = 0  # files under test locks (E03, ADR 0018)
     broken_locks: list[str] = dataclasses.field(default_factory=list)
+    docs_checked: int = 0  # specs, design notes and ADRs linted (E04, ADR 0020)
+    doc_problems: list[str] = dataclasses.field(default_factory=list)
 
     @property
     def verdict(self) -> str:
-        failed = self.broken_locks or any(r.status == "fail" for r in self.results)
+        failed = (
+            self.broken_locks or self.doc_problems or any(r.status == "fail" for r in self.results)
+        )
         return "fail" if failed else "pass"
 
     def to_json(self) -> str:
@@ -490,6 +494,7 @@ class Report:
             "profiles": self.profiles,
             "changed_files": self.changed_files,
             "locks": {"locked": self.locked, "broken": self.broken_locks},
+            "docs": {"checked": self.docs_checked, "problems": self.doc_problems},
             "checks": [dataclasses.asdict(r) for r in self.results],
         }
         return json.dumps(data, indent=2)
@@ -505,6 +510,10 @@ class Report:
         lines += [f"  {line}" for line in self.broken_locks]
         if self.broken_locks:
             lines.append("  Nothing was run: locked tests changed (ADR 0018).")
+        count = len(self.doc_problems)
+        found = f"{count} problem{'' if count == 1 else 's'}" if count else "no problems"
+        lines.append(f"Docs: {self.docs_checked} checked, {found}")
+        lines += [f"  {problem}" for problem in self.doc_problems]
         width = max((len(name) for name in self.profiles), default=0)
         for r in self.results:
             took = f"{r.duration_s:.2f}s" if r.duration_s is not None else "-"
@@ -574,6 +583,18 @@ def agent_problems(root: Path) -> tuple[list[str], int, list[str]]:
     return [], len(checked.locks), [str(line) for line in module.verify_locks(root)]
 
 
+DOCS_MODULE = Path(".factory") / "workflow" / "docs.py"
+
+
+def doc_problems(root: Path) -> tuple[int, list[str]]:
+    """(documents linted, their problems): E04 AC-08. A kit without docs.py lints nothing."""
+    module = _load_module(root / DOCS_MODULE, "factory_docs")
+    if module is None:
+        return 0, []
+    checked = module.validate(root)
+    return checked.count, [str(p) for p in checked]
+
+
 def parse_checks(text: str) -> list[str]:
     """`--checks a,b` -> ["a", "b"]; unknown names are a usage error (E07 AC-01)."""
     names = [name.strip() for name in text.split(",") if name.strip()]
@@ -609,6 +630,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 f"invalid agent files or lock records (python {AGENTS_MODULE.as_posix()} check):"
                 f"{listed}"
             )
+        docs_checked, doc_issues = doc_problems(root)
         if args.base_ref is not None:
             if not args.base_ref.strip():
                 raise GateError("--base-ref must not be empty")
@@ -621,7 +643,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     results = [] if broken else run_profiles(root, selected, settings, files, only)
     names = [p.name for p in selected]
     report = Report(
-        str(root), settings.base_ref, names, files.changed or [], results, locked, broken
+        str(root),
+        settings.base_ref,
+        names,
+        files.changed or [],
+        results,
+        locked,
+        broken,
+        docs_checked,
+        doc_issues,
     )
     print(report.to_json() if args.json else report.to_text())
     return 0 if report.verdict == "pass" else 1

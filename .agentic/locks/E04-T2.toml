@@ -1,0 +1,6 @@
+task = "E04-T2"
+locked = 2026-11-19T16:11:47Z
+
+[[files]]
+path = "tests/test_docs_gate.py"
+sha256 = "e94934624543d2b4dddc17eb8226e7697fa8b4320f57a07d83c93f9d2299b2cf"

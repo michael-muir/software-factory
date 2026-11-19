@@ -9,7 +9,7 @@
     ".factory/agents/_template.md": "78747451ba7bc74a761d472082927905dfe4e1e0ca57a6e0f60fb345f77358ff",
     ".factory/agents/agents.py": "cdf2a2f77bacdfee6daacf3b29b6c23ef76eb98f28afcaa65f5e95ba112c1af3",
     ".factory/agents/claude-hook": "ab4eae1b4ee119292eacb584ea60245914b5d892fd46e096320817393bb25232",
-    ".factory/gates/gate.py": "ee5ec6163a5fc10bfcf5e6428ce302ab9942118212893fe1956ab60486a6fd6a",
+    ".factory/gates/gate.py": "f75f24d9a11fa0c77d5d411745d1db1a240e1fe58fcf843a4ff30ef612475515",
     ".factory/gates/hooks/pre-commit": "da1de00b7e0c59878a3fecc4ce860932768257a0245444ce2b41943a7cc7e814",
     ".factory/gates/hooks/pre-push": "26cc1c0474a70e584489bbe3be2dfa2d00deb8f35e801b7238502b551da7bab7",
     ".factory/gates/hooks/run_hook.py": "c52c144e72fae1c3735e843cea3cadcfd752bac251b42c4044dc69061b389b1e",

@@ -135,7 +135,7 @@ def run_check(repo: Path) -> int:
         default = config_schema.toml_value(config_schema.default_for(key))
         print(f"{shown}: {key}: not set, using default {default}")
 
-    problems = state_problems(repo) + agent_problems(repo)
+    problems = state_problems(repo) + agent_problems(repo) + docs_problems(repo)
     for problem in problems:
         print(problem)
     if result.errors or problems:
@@ -155,6 +155,12 @@ def state_problems(repo: Path, kit_root: Path = KIT_ROOT) -> list[str]:
 def agent_problems(repo: Path, kit_root: Path = KIT_ROOT) -> list[str]:
     """The target's agent-file and lock-record problems, from the kit's agents module (E03)."""
     module = load_kit_module(kit_root / ".factory/agents/agents.py", "factory_kit_agents")
+    return [] if module is None else [str(p) for p in module.validate(repo)]
+
+
+def docs_problems(repo: Path, kit_root: Path = KIT_ROOT) -> list[str]:
+    """The target's specs, design notes and ADRs, linted by the kit's docs module (E04)."""
+    module = load_kit_module(kit_root / ".factory/workflow/docs.py", "factory_kit_docs")
     return [] if module is None else [str(p) for p in module.validate(repo)]
 
 
