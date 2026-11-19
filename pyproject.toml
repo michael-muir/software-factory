@@ -29,7 +29,7 @@ line-length = 100
 select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF"]
 
 [tool.ruff.lint.isort]
-known-first-party = ["agents", "changed_lines", "docs", "factory_installer", "gate", "mutate_python", "mutate_ts", "run_hook", "state", "tests"]
+known-first-party = ["agents", "build", "changed_lines", "docs", "factory_installer", "gate", "mutate_python", "mutate_ts", "run_hook", "state", "tests"]
 
 [tool.ruff.lint.per-file-ignores]
 # The launcher must parse on old Pythons (ADR 0002): no f-strings or annotations.
@@ -39,7 +39,7 @@ known-first-party = ["agents", "changed_lines", "docs", "factory_installer", "ga
 python_version = "3.11"
 strict = true
 exclude = ["^tests/fixtures/skills/"]  # fixture runs hold before/ and after/ copies of a module
-mypy_path = "kit/.factory/gates,kit/.factory/gates/tools,kit/.factory/state,kit/.factory/agents,kit/.factory/workflow"
+mypy_path = "kit/.factory/gates,kit/.factory/gates/tools,kit/.factory/state,kit/.factory/agents,kit/.factory/workflow,kit/.factory/adapters"
 files = [
     "factory_installer",
     "tests",
@@ -49,6 +49,7 @@ files = [
     "kit/.factory/state",
     "kit/.factory/agents",
     "kit/.factory/workflow",
+    "kit/.factory/adapters",
 ]
 
 [tool.pytest.ini_options]
@@ -59,6 +60,7 @@ pythonpath = [
     "kit/.factory/state",
     "kit/.factory/agents",
     "kit/.factory/workflow",
+    "kit/.factory/adapters",
 ]
 addopts = "--strict-markers --ignore=tests/fixtures -n auto"
 markers = [
@@ -77,6 +79,7 @@ source = [
     "kit/.factory/state",
     "kit/.factory/agents",
     "kit/.factory/workflow",
+    "kit/.factory/adapters",
 ]
 
 [tool.software-factory.mutation]

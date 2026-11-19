@@ -26,7 +26,7 @@ from tests._repo import (
 UNTOUCHED = ".factory/agents/_template.md"
 SKILLS = ".factory/skills/handoff/SKILL.md"
 GATES = ".factory/gates/profiles/.gitkeep"
-ADAPTERS = ".factory/adapters/.gitkeep"
+ADAPTERS = ".factory/workflow/templates/adr.md"
 STANDARDS = ".factory/standards/.gitkeep"
 NEW_KIT_FILE = ".factory/workflow/pipeline.md"
 CONFIG = ".agentic/config.toml"
