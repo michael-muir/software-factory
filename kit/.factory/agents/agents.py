@@ -3,6 +3,8 @@
     python .factory/agents/agents.py [--root PATH] check
     python .factory/agents/agents.py [--root PATH] lock [--replace] <task> <path>...
     python .factory/agents/agents.py [--root PATH] unlock <task>
+    python .factory/agents/agents.py [--root PATH] allow <role> <tool> [--path P] [--command C]
+    python .factory/agents/agents.py hook claude-code      # PreToolUse JSON on stdin (ADR 0017)
 
 Roles are `.factory/agents/**/<name>.md` files with TOML front matter. `_schema.md` documents
 the format; files whose names start with `_` aren't roles. Test locks live in
@@ -16,12 +18,17 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import fnmatch
 import hashlib
 import importlib.util
+import json
+import os
 import re
+import shlex
 import sys
 import tomllib
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from types import ModuleType
 from typing import TYPE_CHECKING, Any
@@ -397,6 +404,200 @@ def unlock(root: Path, task: str) -> None:
     record.unlink()
 
 
+# --- the checker (E03 AC-05) --------------------------------------------------------------------
+
+SHELL_CONTROL = (";", "&", "|", "`", "$(", ">", "<", "\n", "\r")
+CHECK_HINT = f"run python {AGENTS_REL}/agents.py check"
+
+
+class Unusable(Exception):
+    """The roles can't be used as asked (unknown role, invalid files, missing input): exit 2."""
+
+
+@dataclass(frozen=True)
+class Decision:
+    allowed: bool
+    reason: str = ""
+
+
+def glob_match(pattern: str, path: str) -> bool:
+    """`*` and `?` stay within one segment; `**` matches zero or more segments."""
+
+    def match(pat: list[str], parts: list[str]) -> bool:
+        if not pat:
+            return not parts
+        if pat[0] == "**":
+            return any(match(pat[1:], parts[i:]) for i in range(len(parts) + 1))
+        return bool(parts) and fnmatch.fnmatchcase(parts[0], pat[0]) and match(pat[1:], parts[1:])
+
+    return match(pattern.split("/"), path.split("/"))
+
+
+def roles(root: Path) -> dict[str, dict[str, Any]]:
+    """Every role's front matter by name. Raises Unusable when the agent files are invalid."""
+    if validate(root):
+        raise Unusable(f"invalid agent files or lock records; {CHECK_HINT}")
+    found: dict[str, dict[str, Any]] = {}
+    for path in _role_files(root):
+        parsed = _state().parse(path.read_text(encoding="utf-8"))
+        if not isinstance(parsed, str):
+            found[str(parsed[0]["name"])] = parsed[0]
+    return found
+
+
+def _repo_rel(root: Path, path: str) -> str | None:
+    """`path` (absolute, or relative to the root) as a repo-relative posix path; None if outside."""
+    given = Path(path)
+    target = os.path.realpath(given if given.is_absolute() else root / given)
+    base = os.path.realpath(root)
+    norm_target, norm_base = os.path.normcase(target), os.path.normcase(base)
+    if norm_target == norm_base or not norm_target.startswith(norm_base.rstrip(os.sep) + os.sep):
+        return None
+    return Path(target[len(base.rstrip(os.sep)) + 1 :]).as_posix()
+
+
+def _locks_by_path(root: Path) -> dict[str, str]:
+    return {rel: task for rel, _, task in _locked_files(root)}
+
+
+def _check_write(root: Path, who: str, data: Mapping[str, Any] | None, path: str) -> Decision:
+    rel = _repo_rel(root, path)
+    if rel is None:
+        return Decision(False, f"{path} is outside the repo")
+    owner = _locks_by_path(root).get(rel)
+    if owner is not None:
+        return Decision(False, f"{rel} is locked by {owner}; locked tests can't be edited")
+    globs = (data or {}).get("scope", {}).get("write")
+    if globs and not any(glob_match(glob, rel) for glob in globs):
+        return Decision(False, f"{who} may only write {', '.join(globs)}, not {rel}")
+    return Decision(True)
+
+
+def _check_run(who: str, data: Mapping[str, Any], command: str) -> Decision:
+    prefixes = data.get("scope", {}).get("run")
+    if not prefixes:
+        return Decision(True)
+    if any(mark in command for mark in SHELL_CONTROL):
+        return Decision(False, f"{who} may not run commands with shell control characters")
+    try:
+        tokens = shlex.split(command)
+    except ValueError as exc:
+        return Decision(False, f"{who}: can't read the command: {exc}")
+    for prefix in prefixes:
+        words = shlex.split(prefix)
+        if tokens[: len(words)] == words:
+            return Decision(True)
+    return Decision(False, f"{who} may only run commands starting with: {'; '.join(prefixes)}")
+
+
+def allow(
+    root: Path,
+    role: str | None,
+    tool: str,
+    *,
+    path: str | None = None,
+    command: str | None = None,
+) -> Decision:
+    """May `role` use `tool` here? With role None, only locks apply (spec AC-05 and AC-07)."""
+    if tool not in TOOLS:
+        raise Unusable(f"unknown tool {tool!r}; tools are {', '.join(TOOLS)}")
+    if tool in ("edit", "write") and not path:
+        raise Unusable(f"{tool} needs --path")
+    if tool == "run" and command is None:
+        raise Unusable("run needs --command")
+    known = roles(root)
+    data: dict[str, Any] | None = None
+    if role is not None:
+        if role not in known:
+            raise Unusable(f"unknown role {role!r}")
+        data = known[role]
+        if tool not in data["tools"]:
+            return Decision(
+                False, f"{role} may not use {tool}; its tools are {', '.join(data['tools'])}"
+            )
+    who = role or "this session"
+    if tool in ("edit", "write") and path:
+        return _check_write(root, who, data, path)
+    if tool == "run" and data is not None and command is not None:
+        return _check_run(who, data, command)
+    return Decision(True)
+
+
+# --- the Claude Code hook (E03 AC-06 to AC-08, ADR 0017) -----------------------------------------
+
+CLAUDE_CODE_TOOLS = {
+    "Read": "read",
+    "Glob": "search",
+    "Grep": "search",
+    "Edit": "edit",
+    "MultiEdit": "edit",
+    "NotebookEdit": "edit",
+    "Write": "write",
+    "Bash": "run",
+    "WebFetch": "web",
+    "WebSearch": "web",
+}
+CLAUDE_CODE_PATHS = {
+    "Edit": "file_path",
+    "MultiEdit": "file_path",
+    "Write": "file_path",
+    "NotebookEdit": "notebook_path",
+}
+
+
+def _claude_code_decision(payload: object, env: Mapping[str, str]) -> Decision:
+    if not isinstance(payload, dict):
+        raise Unusable("hook input must be a JSON object")
+    name, tool_input = payload.get("tool_name"), payload.get("tool_input")
+    if not isinstance(name, str) or not isinstance(tool_input, dict):
+        raise Unusable("hook input needs tool_name and tool_input")
+    cwd = payload.get("cwd")
+    start = Path(cwd) if isinstance(cwd, str) and cwd else Path.cwd()
+    root = _state().find_root(start)
+    known = roles(root)
+
+    agent_type = payload.get("agent_type")
+    role: str | None = None
+    if isinstance(agent_type, str) and agent_type in known:
+        role = agent_type
+    elif env.get("FACTORY_ROLE"):
+        role = env["FACTORY_ROLE"]
+        if role not in known:
+            raise Unusable(f"unknown role {role!r} in FACTORY_ROLE")
+
+    tool = CLAUDE_CODE_TOOLS.get(name)
+    if tool is None:
+        if role is None:
+            return Decision(True)
+        return Decision(False, f"{role} may not use {name}: it maps to no factory tool")
+    path: str | None = None
+    if name in CLAUDE_CODE_PATHS:
+        value = tool_input.get(CLAUDE_CODE_PATHS[name])
+        if not isinstance(value, str) or not value:
+            raise Unusable(f"{name} input has no {CLAUDE_CODE_PATHS[name]}")
+        path = value if Path(value).is_absolute() else str(start / value)
+    command: str | None = None
+    if tool == "run":
+        value = tool_input.get("command")
+        if not isinstance(value, str):
+            raise Unusable("Bash input has no command")
+        command = value
+    return allow(root, role, tool, path=path, command=command)
+
+
+def hook_claude_code(stdin: str, env: Mapping[str, str]) -> int:
+    """0 to allow; 2 to block, with the reason on stderr. Never any other code (ADR 0017)."""
+    try:
+        decision = _claude_code_decision(json.loads(stdin), env)
+    except BaseException as exc:  # fail closed: any other exit code would let the call through
+        print(f"factory hook: blocked: {exc}", file=sys.stderr)
+        return 2
+    if decision.allowed:
+        return 0
+    print(f"factory hook: blocked: {decision.reason}", file=sys.stderr)
+    return 2
+
+
 # --- command line -------------------------------------------------------------------------------
 
 
@@ -417,7 +618,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument(
         "--root", help="repository root (default: the nearest folder holding .agentic/)"
     )
-    commands = parser.add_subparsers(dest="command", required=True)
+    commands = parser.add_subparsers(dest="action", required=True)
     commands.add_parser("check", help="validate agent files and lock records")
     lock_cmd = commands.add_parser("lock", help="lock test files for a task")
     lock_cmd.add_argument("--replace", action="store_true", help="replace an existing lock")
@@ -425,17 +626,41 @@ def main(argv: Sequence[str] | None = None) -> int:
     lock_cmd.add_argument("paths", nargs="+")
     unlock_cmd = commands.add_parser("unlock", help="remove a task's lock record")
     unlock_cmd.add_argument("task")
+    allow_cmd = commands.add_parser("allow", help="may a role use a tool? exit 0 yes, 1 no")
+    allow_cmd.add_argument("role")
+    allow_cmd.add_argument("tool")
+    allow_cmd.add_argument("--path", help="the file an edit or write would change")
+    allow_cmd.add_argument("--command", help="the shell command a run would execute")
+    hook_cmd = commands.add_parser("hook", help="run as a coding tool's hook")
+    hook_cmd.add_argument("tool", choices=["claude-code"])
     args = parser.parse_args(argv)
 
+    if args.action == "hook":
+        if STATE is None:
+            print(f"factory hook: blocked: {NEEDS_STATE}", file=sys.stderr)
+            return 2
+        return hook_claude_code(sys.stdin.read(), os.environ)
     if STATE is None:
         print(NEEDS_STATE, file=sys.stderr)
         return 2
     cwd = Path.cwd()
     root = Path(args.root).resolve() if args.root else _state().find_root(cwd)
+    if args.action == "allow":
+        try:
+            path = str(cwd / args.path) if args.path else None
+            decision = allow(root, args.role, args.tool, path=path, command=args.command)
+        except Unusable as exc:
+            print(f"agents.py: {exc}", file=sys.stderr)
+            return 2
+        if decision.allowed:
+            print("allowed")
+            return 0
+        print(f"denied: {decision.reason}")
+        return 1
     try:
-        if args.command == "check":
+        if args.action == "check":
             return _check(root)
-        if args.command == "lock":
+        if args.action == "lock":
             record = lock(root, args.task, [cwd / p for p in args.paths], replace=args.replace)
             print(f"locked {record.relative_to(root).as_posix()}")
             return 0
