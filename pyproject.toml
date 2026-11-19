@@ -38,6 +38,7 @@ known-first-party = ["agents", "changed_lines", "docs", "factory_installer", "ga
 [tool.mypy]
 python_version = "3.11"
 strict = true
+exclude = ["^tests/fixtures/skills/"]  # fixture runs hold before/ and after/ copies of a module
 mypy_path = "kit/.factory/gates,kit/.factory/gates/tools,kit/.factory/state,kit/.factory/agents,kit/.factory/workflow"
 files = [
     "factory_installer",

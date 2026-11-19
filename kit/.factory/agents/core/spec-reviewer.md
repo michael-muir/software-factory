@@ -38,7 +38,7 @@ Must not:
 
 - Change code, tests or docs. Findings go back to their authors.
 - See the other reviewers' findings before it records its own.
-- Approve a change with an open finding of high severity.
+- Approve a change with an open finding of blocker or major severity.
 
 ## Inputs
 
