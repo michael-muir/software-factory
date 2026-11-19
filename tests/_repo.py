@@ -38,7 +38,10 @@ KIT_FILES = frozenset(
         ".factory/gates/hooks/pre-push",
         ".factory/gates/hooks/run_hook.py",
         ".factory/state/state.py",
-        ".factory/workflow/.gitkeep",
+        ".factory/workflow/docs.py",
+        ".factory/workflow/templates/adr.md",
+        ".factory/workflow/templates/design.md",
+        ".factory/workflow/templates/spec.md",
         ".factory/adapters/.gitkeep",
     }
 )

@@ -1,0 +1,6 @@
+task = "E04-T1"
+locked = 2026-11-19T15:56:18Z
+
+[[files]]
+path = "tests/test_docs_lint.py"
+sha256 = "1fff564aab39e66a74c6615021dea3bd68c32cab6cd7c954eb9ccb1770e828dc"
