@@ -74,6 +74,10 @@ def test_ts_js_profile_matches_the_spec() -> None:
             ".factory/gates/tools/mutate_ts.py",
             "--min",
             "{mutation_percent}",
+            "--scope",
+            "{mutation_scope}",
+            "--base-ref",
+            "{base_ref}",
             "{changed_files}",
         ],
     }

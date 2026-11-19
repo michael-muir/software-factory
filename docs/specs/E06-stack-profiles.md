@@ -83,6 +83,13 @@ Give the E05 gate real work to do. Two profiles, Python and TS/JS, turn the gate
 - **AC-05b** *(Change, 17 Nov 2026: a design measurement found `gate.py` has 565 mutants, about 1 to 4 hours of serial runs.)* Two settings keep the Python helper inside its timeout. Both live under `[tool.software-factory.mutation]` in the project's `pyproject.toml`:
   - **`max-mutants`** (default 100): at most this many mutants are tested per run. The sample is deterministic: the same set of file contents always selects the same mutants. The score is the kill rate of the sample, and the output says "sampled X of Y".
   - **`test-args`** (default `[]`): extra pytest arguments for the kill test, so a project can narrow it to fast tests. The command becomes `<interpreter> -m pytest -q -x <test-args>`.
+- **AC-05c** *(Change, 19 Nov 2026, code review, approved by the product owner: mutation is the slowest check and the Line Monitor's top gate failure, and `mutation_scope = "changed-lines"` had meant changed files.)* With `gates.mutation_scope = "changed-lines"` (the default), both helpers mutate only the lines changed since the merge base of `gates.base_ref` (or `--base-ref`) and HEAD, uncommitted changes included.
+  - **What counts:** added and modified lines. New untracked files count in full. Deleted lines produce no mutants. With `"all"`, whole files are mutated, as before.
+  - **How the helpers learn the scope:** the gate gains two placeholders, `{mutation_scope}` and `{base_ref}` (E05). The shipped profiles pass `--scope {mutation_scope} --base-ref {base_ref}`, so CI's `--base-ref` reaches the helpers. A helper run without `--scope`, from an older profile, mutates whole files.
+  - **Python:** after `cosmic-ray init`, mutants whose start line is outside the changed lines are dropped before sampling, so `max-mutants` samples only mutants on changed lines.
+  - **TS/JS:** Stryker's `mutate` list gives each changed range as `file:start-end`.
+  - **Output:** each helper says how many mutants are on changed lines, for example "testing 12 mutants on changed lines (of 418 in 3 files)".
+  - **No mutants on changed lines** (for example, only comments or deletions changed) means nothing to mutate: exit 0.
 - **AC-06** `mutate_ts.py --min N FILE...` uses only the standard library and runs `npx --no-install stryker run` with the Vitest runner:
   - It mutates only the given files that are not tests, excluding `*.test.*`, `*.spec.*` and anything under `__tests__/`.
   - It never mutates the installed kit under `.factory/`, or tool configuration files named `*.config.*` (`eslint.config.js`, `vitest.config.ts` and so on). *(Clarified 17 Nov 2026, product owner decision during T2: config files pulled the reference fixture's score down to 47%.)*

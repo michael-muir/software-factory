@@ -47,7 +47,7 @@ def test_every_e05_ac_has_a_test(request: pytest.FixtureRequest) -> None:
 
 @pytest.mark.ac("E06-AC-15")
 def test_e06_spec_defines_ac_01_to_ac_15_plus_05b() -> None:
-    expected = {f"E06-AC-{n:02d}" for n in range(1, 16)} | {"E06-AC-05b"}
+    expected = {f"E06-AC-{n:02d}" for n in range(1, 16)} | {"E06-AC-05b", "E06-AC-05c"}
     assert spec_ac_ids("E06") == expected
 
 

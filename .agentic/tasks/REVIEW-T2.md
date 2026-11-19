@@ -1,10 +1,10 @@
 +++
 id = "REVIEW-T2"
 title = "Code review: lock hashes, mutation on a temp copy, lock status in the gate report"
-status = "in-review"
+status = "done"
 review_round = 0
 created = 2026-11-19T07:37:03Z
-updated = 2026-11-19T08:25:04Z
+updated = 2026-11-19T13:34:01Z
 +++
 
 ## Goal
@@ -17,4 +17,4 @@ Each with a short ADR amendment.
 
 ## Notes
 
-Watchdog kills runaway workers, so an interrupted mutation run must never leave a mutant behind. The Line Monitor shows locked-test counts.
+Watchdog kills runaway workers, so an interrupted mutation run must never leave a mutant behind. The Line Monitor shows locked-test counts. Merged in #56; CI passed on three OSes. The product owner approved the relock (4cbbc62) with the merge.

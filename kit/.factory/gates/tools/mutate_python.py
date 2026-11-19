@@ -1,7 +1,7 @@
 """Mutation-score helper for the Python gate profile (E06, ADR 0010). Standard library only.
 
 Usage:
-    python .factory/gates/tools/mutate_python.py --min PERCENT FILE...
+    python .factory/gates/tools/mutate_python.py --min PERCENT [--scope S --base-ref REF] FILE...
 
 Runs cosmic-ray on the given non-test files with the interpreter running this script, in a copy
 of the project (never the working tree), then compares the share of killed mutants to PERCENT.
@@ -28,6 +28,12 @@ import tomllib
 from collections.abc import Iterator, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
+
+# The shared changed_lines.py beside this file, found even under `python -I`, and imported
+# without writing __pycache__ into the repo (the gate fails a check that modifies it, ADR 0008).
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.dont_write_bytecode = True
+from changed_lines import Ranges, changed_lines, in_ranges  # noqa: E402
 
 DEFAULT_MAX_MUTANTS = 100
 MUTANT_TIMEOUT_S = 300.0
@@ -195,6 +201,19 @@ def _keep_only(session: Path, keep_jobs: set[str]) -> None:
         db.executemany("DELETE FROM work_items WHERE job_id = ?", drop)
 
 
+def _on_lines(session: Path, lines: dict[str, Ranges]) -> set[str]:
+    """The jobs whose mutant starts on a changed line."""
+    with _db(session) as db:
+        rows = db.execute(
+            "SELECT job_id, module_path, start_pos_row FROM mutation_specs"
+        ).fetchall()
+    return {job for job, path, row in rows if in_ranges(row, lines.get(Path(path).as_posix(), []))}
+
+
+def _count(n: int, noun: str) -> str:
+    return f"{n} {noun}{'' if n == 1 else 's'}"
+
+
 def _score(session: Path) -> tuple[int, int]:
     with _db(session) as db:
         rows = db.execute("SELECT test_outcome FROM work_results").fetchall()
@@ -202,12 +221,27 @@ def _score(session: Path) -> tuple[int, int]:
     return outcomes.count("KILLED"), outcomes.count("SURVIVED")
 
 
-def run(root: Path, files: Sequence[str], minimum: float) -> int:
+def run(
+    root: Path,
+    files: Sequence[str],
+    minimum: float,
+    *,
+    scope: str | None = None,
+    base_ref: str | None = None,
+) -> int:
+    """Mutate `files`: whole files, or with scope "changed-lines" only lines changed since
+    `base_ref` (E06 AC-05c)."""
     settings = load_settings(root)
     sources = select_sources(files)
     if not sources:
         print("no source files to mutate")
         return 0
+    lines: dict[str, Ranges] | None = None
+    if scope == "changed-lines":
+        try:
+            lines = changed_lines(root, base_ref or "", sources)
+        except ValueError as exc:
+            raise HelperError(str(exc)) from exc
     _require("cosmic_ray", "cosmic-ray")
     _require("pytest", "pytest")
 
@@ -232,10 +266,19 @@ def run(root: Path, files: Sequence[str], minimum: float) -> int:
         _cosmic_ray("init", str(config), str(session), cwd=copy)
 
         keys = _stable_keys(session)
-        total = len(keys)
-        if total == 0:
+        if not keys:
             print(f"mutating {len(sources)} file(s): no mutants generated")
             return 0
+        if lines is not None:
+            on_lines = _on_lines(session, lines)
+            every = f"of {len(keys)} in {_count(len(sources), 'file')}"
+            if not on_lines:
+                print(f"no mutants on changed lines ({every})")
+                return 0
+            print(f"{_count(len(on_lines), 'mutant')} on changed lines ({every})")
+            keys = {job: key for job, key in keys.items() if job in on_lines}
+            _keep_only(session, on_lines)
+        total = len(keys)
         chosen = set(sample(list(keys.values()), content_seed(root, sources), settings.max_mutants))
         if len(chosen) < total:
             _keep_only(session, {job for job, key in keys.items() if key in chosen})
@@ -257,10 +300,19 @@ def run(root: Path, files: Sequence[str], minimum: float) -> int:
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="mutate_python.py", description=__doc__)
     parser.add_argument("--min", type=float, required=True, help="minimum kill percentage")
+    parser.add_argument(
+        "--scope",
+        choices=["changed-lines", "all"],
+        help="changed-lines: mutate only lines changed since --base-ref (default: whole files)",
+    )
+    parser.add_argument("--base-ref", help="the ref changed lines are measured from")
     parser.add_argument("files", nargs="*", help="changed files, repo-relative")
     args = parser.parse_args(argv)
+    if args.scope == "changed-lines" and not args.base_ref:
+        print("mutate_python: --scope changed-lines needs --base-ref", file=sys.stderr)
+        return 2
     try:
-        return run(Path.cwd(), args.files, args.min)
+        return run(Path.cwd(), args.files, args.min, scope=args.scope, base_ref=args.base_ref)
     except HelperError as exc:
         print(f"mutate_python: {exc}", file=sys.stderr)
         return 2

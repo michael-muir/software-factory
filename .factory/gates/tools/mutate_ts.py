@@ -1,7 +1,7 @@
 """Mutation-score helper for the TS/JS gate profile (E06, ADR 0010). Standard library only.
 
 Usage:
-    python .factory/gates/tools/mutate_ts.py --min PERCENT FILE...
+    python .factory/gates/tools/mutate_ts.py --min PERCENT [--scope S --base-ref REF] FILE...
 
 Runs Stryker (Vitest runner) from the project's node_modules on the given non-test files,
 with its config and JSON report in a temporary directory outside the repo, then compares the
@@ -21,6 +21,12 @@ import tempfile
 from collections.abc import Mapping, Sequence
 from pathlib import Path, PurePosixPath
 from typing import Any
+
+# The shared changed_lines.py beside this file, found even under `python -I`, and imported
+# without writing __pycache__ into the repo (the gate fails a check that modifies it, ADR 0008).
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.dont_write_bytecode = True
+from changed_lines import Ranges, changed_lines  # noqa: E402
 
 SOURCE_SUFFIXES = (".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs")
 DETECTED = ("Killed", "Timeout")
@@ -67,10 +73,17 @@ def select_sources(paths: Sequence[str]) -> list[str]:
     ]
 
 
-def stryker_config(sources: Sequence[str], report: Path) -> dict[str, Any]:
+def mutate_entries(sources: Sequence[str], lines: Mapping[str, Ranges] | None) -> list[str]:
+    """Stryker's `mutate` list: whole files, or each changed range as `file:start-end`."""
+    if lines is None:
+        return list(sources)
+    return [f"{path}:{first}-{last}" for path in sources for first, last in lines.get(path, [])]
+
+
+def stryker_config(mutate: Sequence[str], report: Path) -> dict[str, Any]:
     return {
         "testRunner": "vitest",
-        "mutate": list(sources),
+        "mutate": list(mutate),
         "reporters": ["json"],
         "jsonReporter": {"fileName": report.as_posix()},
         "coverageAnalysis": "perTest",
@@ -95,10 +108,29 @@ def _tail(text: str) -> str:
     return "\n".join(text.splitlines()[-OUTPUT_TAIL_LINES:])
 
 
-def run(root: Path, files: Sequence[str], minimum: float) -> int:
+def run(
+    root: Path,
+    files: Sequence[str],
+    minimum: float,
+    *,
+    scope: str | None = None,
+    base_ref: str | None = None,
+) -> int:
+    """Mutate `files`: whole files, or with scope "changed-lines" only lines changed since
+    `base_ref` (E06 AC-05c)."""
     sources = select_sources(files)
     if not sources:
         print("no source files to mutate")
+        return 0
+    lines = None
+    if scope == "changed-lines":
+        try:
+            lines = changed_lines(root, base_ref or "", sources)
+        except ValueError as exc:
+            raise HelperError(str(exc)) from exc
+    mutate = mutate_entries(sources, lines)
+    if not mutate:
+        print(f"no changed lines to mutate in {len(sources)} file(s)")
         return 0
     npx = shutil.which("npx")
     if npx is None:
@@ -110,8 +142,9 @@ def run(root: Path, files: Sequence[str], minimum: float) -> int:
     workdir = Path(tempfile.mkdtemp(prefix="factory-mutate-"))
     try:
         config, report_path = workdir / "stryker.config.json", workdir / "mutation.json"
-        config.write_text(json.dumps(stryker_config(sources, report_path)), encoding="utf-8")
-        print(f"mutating {len(sources)} file(s) with Stryker")
+        config.write_text(json.dumps(stryker_config(mutate, report_path)), encoding="utf-8")
+        where = f"{len(mutate)} changed range(s) in" if lines is not None else "all of"
+        print(f"mutating {where} {len(sources)} file(s) with Stryker")
         completed = subprocess.run(
             [npx, "--no-install", "stryker", "run", config.as_posix()],
             cwd=root,
@@ -137,10 +170,19 @@ def run(root: Path, files: Sequence[str], minimum: float) -> int:
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="mutate_ts.py", description=__doc__)
     parser.add_argument("--min", type=float, required=True, help="minimum mutation score")
+    parser.add_argument(
+        "--scope",
+        choices=["changed-lines", "all"],
+        help="changed-lines: mutate only lines changed since --base-ref (default: whole files)",
+    )
+    parser.add_argument("--base-ref", help="the ref changed lines are measured from")
     parser.add_argument("files", nargs="*", help="changed files, repo-relative")
     args = parser.parse_args(argv)
+    if args.scope == "changed-lines" and not args.base_ref:
+        print("mutate_ts: --scope changed-lines needs --base-ref", file=sys.stderr)
+        return 2
     try:
-        return run(Path.cwd(), args.files, args.min)
+        return run(Path.cwd(), args.files, args.min, scope=args.scope, base_ref=args.base_ref)
     except HelperError as exc:
         print(f"mutate_ts: {exc}", file=sys.stderr)
         return 2
