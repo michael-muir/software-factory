@@ -23,7 +23,7 @@ from tests._repo import (
     snapshot,
 )
 
-AGENTS = ".factory/agents/.gitkeep"
+WORKFLOW = ".factory/workflow/.gitkeep"
 SKILLS = ".factory/skills/.gitkeep"
 GATES = ".factory/gates/profiles/.gitkeep"
 ADAPTERS = ".factory/adapters/.gitkeep"
@@ -138,10 +138,10 @@ def test_upgrade_updates_untouched_kit_files(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     repo, _ = _installed_v1(tmp_path, capsys)
-    v2 = make_kit(tmp_path, "0.2.0", {AGENTS: b"agents v2\n"})
+    v2 = make_kit(tmp_path, "0.2.0", {WORKFLOW: b"workflow v2\n"})
     report = _install(repo, v2, capsys)
-    assert (repo / AGENTS).read_bytes() == b"agents v2\n"
-    assert _files(report)["updated"] == [AGENTS]
+    assert (repo / WORKFLOW).read_bytes() == b"workflow v2\n"
+    assert _files(report)["updated"] == [WORKFLOW]
     assert report["kit_version"] == "0.2.0"
 
 
@@ -203,7 +203,7 @@ def test_edited_file_the_kit_did_not_change_gets_no_factory_new(
 ) -> None:
     repo, _ = _installed_v1(tmp_path, capsys)
     (repo / SKILLS).write_bytes(b"my skills\n")
-    v2 = make_kit(tmp_path, "0.2.0", {AGENTS: b"agents v2\n"})
+    v2 = make_kit(tmp_path, "0.2.0", {WORKFLOW: b"workflow v2\n"})
     report = _install(repo, v2, capsys)
     assert _files(report)["kept"] == [SKILLS]
     assert not (repo / (SKILLS + ".factory-new")).exists()
@@ -305,7 +305,7 @@ def test_manifest_after_upgrade_reflects_every_outcome(
         tmp_path,
         "0.2.0",
         {
-            AGENTS: b"agents v2\n",
+            WORKFLOW: b"workflow v2\n",
             SKILLS: b"skills v2\n",
             ADAPTERS: None,
             NEW_KIT_FILE: b"# pipeline\n",
@@ -315,7 +315,7 @@ def test_manifest_after_upgrade_reflects_every_outcome(
     manifest = _manifest(repo)
     files = _manifest_files(repo)
     assert manifest["kit_version"] == "0.2.0"
-    assert files[AGENTS] == normalised_hash((repo / AGENTS).read_bytes())
+    assert files[WORKFLOW] == normalised_hash((repo / WORKFLOW).read_bytes())
     assert files[NEW_KIT_FILE] == normalised_hash((repo / NEW_KIT_FILE).read_bytes())
     assert files[SKILLS] == v1_skills_hash, "a kept file keeps its old manifest hash"
     assert ADAPTERS not in files
