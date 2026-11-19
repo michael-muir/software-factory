@@ -1,9 +1,9 @@
 +++
-phase = "test"
+phase = "ship"
 track = "full"
-active_task = "E09-T2"
+active_task = ""
 blockers = []
-updated = 2026-11-19T18:42:19Z
+updated = 2026-11-19T19:03:15Z
 +++
 
-E09 (#9): spec approved, design note and ADR 0021 accepted. Built in two slices, E09-T1 and E09-T2. Resume with `python .factory/state/state.py resume`.
+E09 (16 core roles) is done: T1 #61 and T2 #62 are merged, and issue #9 is closed. No task is active. The next epic is the product owner's choice: E08 (#8), E10 (#10) and E11 (#11) have their dependencies met.
