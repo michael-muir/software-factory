@@ -433,6 +433,8 @@ def run_profiles(
     values = {
         "{coverage_percent}": str(round(settings.coverage_threshold * 100)),
         "{mutation_percent}": str(round(settings.mutation_threshold * 100)),
+        "{mutation_scope}": settings.mutation_scope,
+        "{base_ref}": settings.base_ref,
     }
     results: list[Result] = []
     for profile in profiles:
