@@ -1,0 +1,6 @@
+task = "E10-T2"
+locked = 2026-11-19T20:25:31Z
+
+[[files]]
+path = "tests/test_skills_make.py"
+sha256 = "05e3a093c738e8a31e751eca5ce18211886f3b425f4aa5a7c46343cf9f464471"
