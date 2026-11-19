@@ -29,6 +29,8 @@ Must not:
 - The request and the requester's answers.
 - The PRD, the blueprint, earlier specs and ADRs.
 - skill: spec-interview
+- skill: resume-from-state, to start a session
+- skill: handoff, to end one
 
 ## Outputs
 

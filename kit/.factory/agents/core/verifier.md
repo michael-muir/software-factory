@@ -43,6 +43,8 @@ Must not:
 - The slice's branch, task file and spec.
 - The gate (`.factory/gates/gate.py`) and its report.
 - skill: verify-with-evidence
+- skill: resume-from-state, to start a session
+- skill: handoff, to end one
 
 ## Outputs
 

@@ -27,6 +27,8 @@ Must not:
 
 - The slice's locked tests, task file and design note.
 - skill: tdd-slices
+- skill: resume-from-state, to start a session
+- skill: handoff, to end one
 
 ## Outputs
 

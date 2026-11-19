@@ -44,6 +44,8 @@ Must not:
 
 - The diff, the spec and the dependency changes.
 - skill: threat-check
+- skill: resume-from-state, to start a session
+- skill: handoff, to end one
 
 ## Outputs
 

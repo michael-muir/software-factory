@@ -1,0 +1,10 @@
+task = "E10-T1"
+locked = 2026-11-19T19:09:47Z
+
+[[files]]
+path = "tests/test_skills_format.py"
+sha256 = "3054588255f879535f75233ac1c45d13590d45824ba52b795974dab491d704e2"
+
+[[files]]
+path = "tests/test_skills_flow.py"
+sha256 = "f6fab5480275d9ae008b1b6c5834f78e1b5c9d9599d857944e07777351ad351e"

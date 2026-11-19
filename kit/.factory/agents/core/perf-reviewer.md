@@ -44,6 +44,8 @@ Must not:
 
 - The diff, the performance budgets and any benchmark results.
 - skill: perf-budget
+- skill: resume-from-state, to start a session
+- skill: handoff, to end one
 
 ## Outputs
 
