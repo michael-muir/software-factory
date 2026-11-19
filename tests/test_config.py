@@ -31,6 +31,7 @@ SPEC_DEFAULTS = {
         "python_command": ["python"],
     },
     "models": {"cross_model_vendor": "openai"},
+    "adapters": {"tools": ["claude-code", "copilot", "cursor"]},
     "telemetry": {"enabled": False},
 }
 
