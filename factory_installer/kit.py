@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import hashlib
+import importlib.util
+import sys
 from dataclasses import dataclass
 from pathlib import Path
+from types import ModuleType
 
 KIT_ROOT = Path(__file__).resolve().parent.parent / "kit"
 KIT_DIR = ".factory"  # kit-managed files, tracked in the manifest
@@ -48,3 +51,16 @@ def load_kit(root: Path = KIT_ROOT) -> Kit:
             if path.is_file() and not _is_bytecode(path.relative_to(root)):
                 files[path.relative_to(root).as_posix()] = to_lf(path.read_bytes())
     return Kit(version=version, files=files)
+
+
+def load_kit_module(path: Path, name: str) -> ModuleType | None:
+    """A module from the kit's own files (gate, state, agents), or None if the kit lacks it."""
+    if not path.is_file():
+        return None
+    spec = importlib.util.spec_from_file_location(name, path)
+    if spec is None or spec.loader is None:
+        return None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module  # dataclasses look the module up by name
+    spec.loader.exec_module(module)
+    return module
