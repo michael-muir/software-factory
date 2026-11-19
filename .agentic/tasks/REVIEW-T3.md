@@ -1,10 +1,10 @@
 +++
 id = "REVIEW-T3"
 title = "Code review: changed-lines mutation"
-status = "todo"
+status = "in-progress"
 review_round = 0
 created = 2026-11-19T07:37:03Z
-updated = 2026-11-19T07:37:03Z
+updated = 2026-11-19T13:01:48Z
 +++
 
 ## Goal

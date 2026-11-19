@@ -63,6 +63,8 @@ Valid check names: `format`, `lint`, `types`, `build`, `tests`, `coverage`, `mut
 | `{coverage_percent}` | `gates.coverage_threshold` as a whole percent, for example `80` |
 | `{mutation_percent}` | `gates.mutation_threshold` as a whole percent, for example `60` |
 | `{changed_files}` | One argument per file. Allowed only as a whole argument. |
+| `{mutation_scope}` | `gates.mutation_scope`: `changed-lines` or `all` *(added 19 Nov 2026, E06 AC-05c)* |
+| `{base_ref}` | The effective base ref: `--base-ref` if given, else `gates.base_ref` *(added 19 Nov 2026, E06 AC-05c)* |
 
 ## New `config.toml` keys
 
