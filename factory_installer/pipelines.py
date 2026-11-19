@@ -7,14 +7,14 @@ the installer's upgrade rules (ADRs 0005 and 0006) apply to pipeline files as to
 
 from __future__ import annotations
 
-import importlib.util
 import json
 import shlex
-import sys
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from types import ModuleType
+
+from factory_installer.kit import load_kit_module
 
 GATE = ".factory/gates/gate.py"
 PYTHON_VERSION = "3.12"
@@ -336,12 +336,9 @@ def clean_options(name: str, options: object) -> dict[str, list[str]]:
 
 def _load_gate(kit_root: Path) -> ModuleType:
     path = kit_root / ".factory" / "gates" / "gate.py"
-    spec = importlib.util.spec_from_file_location("factory_kit_gate", path)
-    if spec is None or spec.loader is None:
+    module = load_kit_module(path, "factory_kit_gate")
+    if module is None:
         raise PipelineError(f"cannot load the kit's gate from {path}")
-    module = importlib.util.module_from_spec(spec)
-    sys.modules["factory_kit_gate"] = module  # dataclasses look the module up by name
-    spec.loader.exec_module(module)
     return module
 
 

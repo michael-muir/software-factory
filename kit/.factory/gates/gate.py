@@ -124,7 +124,7 @@ class Settings:
     @classmethod
     def load(cls, root: Path) -> Settings:
         """Read gates.* from .agentic/config.toml; missing keys take the defaults."""
-        values = dict(DEFAULTS)
+        values: dict[str, Any] = dict(DEFAULTS)
         path = root / CONFIG_PATH
         if path.is_file():
             try:
@@ -141,15 +141,7 @@ class Settings:
                     if problem:
                         raise GateError(f"{CONFIG_PATH.as_posix()}: gates.{key}: {problem}")
                     values[key] = gates[key]
-        return cls(
-            coverage_threshold=float(values["coverage_threshold"]),  # type: ignore[arg-type]
-            mutation_threshold=float(values["mutation_threshold"]),  # type: ignore[arg-type]
-            mutation_scope=str(values["mutation_scope"]),
-            profiles=[str(name) for name in values["profiles"]],  # type: ignore[attr-defined]
-            base_ref=str(values["base_ref"]),
-            commit_checks=[str(name) for name in values["commit_checks"]],  # type: ignore[attr-defined]
-            python_command=[str(arg) for arg in values["python_command"]],  # type: ignore[attr-defined]
-        )
+        return cls(**values)
 
 
 # --- profiles -----------------------------------------------------------------------------------
@@ -261,18 +253,6 @@ class Result:
     command: list[str] | None = None
     output_tail: str = ""
 
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "profile": self.profile,
-            "check": self.check,
-            "status": self.status,
-            "reason": self.reason,
-            "exit_code": self.exit_code,
-            "duration_s": self.duration_s,
-            "command": self.command,
-            "output_tail": self.output_tail,
-        }
-
 
 def _tail(output: bytes) -> str:
     lines = output.decode("utf-8", errors="replace").splitlines()
@@ -327,22 +307,12 @@ def _kill_tree(process: subprocess.Popen[bytes]) -> None:
 
 def _execute(argv: list[str], root: Path, timeout_s: int) -> tuple[int | None, bytes, bool]:
     """Run argv from root without a shell; on timeout kill the whole process tree."""
+    group: dict[str, Any] = {"start_new_session": True}  # so a timeout can kill the tree
     if sys.platform == "win32":
-        process = subprocess.Popen(
-            argv,
-            cwd=root,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            creationflags=subprocess.CREATE_NEW_PROCESS_GROUP,
-        )
-    else:
-        process = subprocess.Popen(
-            argv,
-            cwd=root,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            start_new_session=True,
-        )
+        group = {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
+    process = subprocess.Popen(
+        argv, cwd=root, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, **group
+    )
     try:
         output, _ = process.communicate(timeout=timeout_s)
         return process.returncode, output, False
@@ -514,7 +484,7 @@ class Report:
             "base_ref": self.base_ref,
             "profiles": self.profiles,
             "changed_files": self.changed_files,
-            "checks": [r.to_dict() for r in self.results],
+            "checks": [dataclasses.asdict(r) for r in self.results],
         }
         return json.dumps(data, indent=2)
 
@@ -552,19 +522,24 @@ def find_root(start: Path) -> Path:
 
 
 STATE_MODULE = Path(".factory") / "state" / "state.py"
+AGENTS_MODULE = Path(".factory") / "agents" / "agents.py"
 
 
-def load_state_module(path: Path) -> ModuleType | None:
-    """The E02 state module (ADR 0015), or None if this kit predates it."""
+def _load_module(path: Path, name: str) -> ModuleType | None:
+    """A kit module loaded from its file, or None if this kit predates it (ADRs 0015, 0016)."""
     if not path.is_file():
         return None
-    spec = importlib.util.spec_from_file_location("factory_state", path)
+    spec = importlib.util.spec_from_file_location(name, path)
     if spec is None or spec.loader is None:
         return None
     module = importlib.util.module_from_spec(spec)
-    sys.modules["factory_state"] = module  # dataclasses look the module up by name
+    sys.modules[name] = module  # dataclasses look the module up by name
     spec.loader.exec_module(module)
     return module
+
+
+def load_state_module(path: Path) -> ModuleType | None:
+    return _load_module(path, "factory_state")
 
 
 def state_problems(root: Path) -> list[str]:
@@ -573,25 +548,9 @@ def state_problems(root: Path) -> list[str]:
     return [] if module is None else [str(p) for p in module.validate(root)]
 
 
-AGENTS_MODULE = Path(".factory") / "agents" / "agents.py"
-
-
-def load_agents_module(path: Path) -> ModuleType | None:
-    """The E03 agents module (ADR 0016), or None if this kit predates it."""
-    if not path.is_file():
-        return None
-    spec = importlib.util.spec_from_file_location("factory_agents", path)
-    if spec is None or spec.loader is None:
-        return None
-    module = importlib.util.module_from_spec(spec)
-    sys.modules["factory_agents"] = module
-    spec.loader.exec_module(module)
-    return module
-
-
 def agent_problems(root: Path) -> tuple[list[str], list[str]]:
     """(problems in agent files and lock records, broken locks) for E03 AC-04 and AC-10."""
-    module = load_agents_module(root / AGENTS_MODULE)
+    module = _load_module(root / AGENTS_MODULE, "factory_agents")
     if module is None:
         return [], []
     problems = [str(p) for p in module.validate(root)]

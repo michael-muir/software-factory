@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import argparse
 import dataclasses
-import importlib.util
 import sys
 import tomllib
 from collections.abc import Sequence
@@ -19,7 +18,7 @@ from pathlib import Path
 from factory_installer import config_schema, manifest, pipelines
 from factory_installer.apply import apply, write_file
 from factory_installer.hooks import run_hooks
-from factory_installer.kit import KIT_ROOT, load_kit
+from factory_installer.kit import KIT_ROOT, load_kit, load_kit_module
 from factory_installer.plan import MERGE_SUFFIX, manifest_deleted, manifest_files, plan
 from factory_installer.report import Report
 from factory_installer.target import PathEscapeError, current_hashes, ensure_inside, find_git_root
@@ -149,28 +148,14 @@ def run_check(repo: Path) -> int:
 
 def state_problems(repo: Path, kit_root: Path = KIT_ROOT) -> list[str]:
     """The target's state-file problems, from the kit's own state module (E02, ADR 0015)."""
-    path = kit_root / ".factory" / "state" / "state.py"
-    spec = importlib.util.spec_from_file_location("factory_kit_state", path)
-    if spec is None or spec.loader is None:
-        return []
-    module = importlib.util.module_from_spec(spec)
-    sys.modules["factory_kit_state"] = module
-    spec.loader.exec_module(module)
-    return [str(p) for p in module.validate(repo)]
+    module = load_kit_module(kit_root / ".factory/state/state.py", "factory_kit_state")
+    return [] if module is None else [str(p) for p in module.validate(repo)]
 
 
 def agent_problems(repo: Path, kit_root: Path = KIT_ROOT) -> list[str]:
     """The target's agent-file and lock-record problems, from the kit's agents module (E03)."""
-    path = kit_root / ".factory" / "agents" / "agents.py"
-    if not path.is_file():
-        return []
-    spec = importlib.util.spec_from_file_location("factory_kit_agents", path)
-    if spec is None or spec.loader is None:
-        return []
-    module = importlib.util.module_from_spec(spec)
-    sys.modules["factory_kit_agents"] = module
-    spec.loader.exec_module(module)
-    return [str(p) for p in module.validate(repo)]
+    module = load_kit_module(kit_root / ".factory/agents/agents.py", "factory_kit_agents")
+    return [] if module is None else [str(p) for p in module.validate(repo)]
 
 
 def run_install(

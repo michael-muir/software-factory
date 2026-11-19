@@ -18,7 +18,7 @@ import os
 import re
 import sys
 import tomllib
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Collection, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -156,13 +156,19 @@ def parse(text: str) -> tuple[dict[str, object], str] | str:
         return f"invalid TOML: {exc}"
 
 
-def _check_fields(
-    rel: str, data: dict[str, object], schema: Schema, prefix: str = ""
+def check_fields(
+    rel: str,
+    data: dict[str, object],
+    schema: Schema,
+    prefix: str = "",
+    optional: Collection[str] = (),
 ) -> list[Problem]:
+    """Each schema key's rule, plus missing keys (unless optional) and unknown keys."""
     found: list[Problem] = []
     for key, rule in schema.items():
         if key not in data:
-            found.append(Problem(rel, prefix + key, "missing"))
+            if key not in optional:
+                found.append(Problem(rel, prefix + key, "missing"))
             continue
         problem = rule(data[key])
         if problem:
@@ -173,7 +179,7 @@ def _check_fields(
     return found
 
 
-def _check_headings(rel: str, body: str, headings: Sequence[str]) -> list[Problem]:
+def check_headings(rel: str, body: str, headings: Sequence[str]) -> list[Problem]:
     lines = {line.rstrip() for line in body.split("\n")}
     return [
         Problem(rel, heading, "missing heading") for heading in headings if heading not in lines
@@ -193,7 +199,7 @@ def _check_findings(rel: str, value: object) -> list[Problem]:
     found: list[Problem] = []
     seen: set[object] = set()
     for index, finding in enumerate(value):
-        found += _check_fields(rel, finding, FINDING_SCHEMA, f"findings[{index}].")
+        found += check_fields(rel, finding, FINDING_SCHEMA, f"findings[{index}].")
         finding_id = finding.get("id")
         if finding_id in seen:
             found.append(Problem(rel, "findings", f"duplicate finding id {finding_id}"))
@@ -218,7 +224,7 @@ def _check_state(root: Path) -> tuple[list[Problem], str]:
     if isinstance(loaded, Problem):
         return [loaded], ""
     data, _body = loaded
-    found = _check_fields(STATE_REL, data, STATE_SCHEMA)
+    found = check_fields(STATE_REL, data, STATE_SCHEMA)
     active = data.get("active_task")
     return found, active if isinstance(active, str) else ""
 
@@ -229,12 +235,12 @@ def _check_task(root: Path, rel: str) -> list[Problem]:
         return [loaded]
     data, body = loaded
     findings = data.pop("findings", [])
-    found = _check_fields(rel, data, TASK_SCHEMA)
+    found = check_fields(rel, data, TASK_SCHEMA)
     found += _check_findings(rel, findings)
     stem = Path(rel).stem
     if isinstance(data.get("id"), str) and data["id"] != stem:
         found.append(Problem(rel, "id", f"must match the file name ({stem})"))
-    return found + _check_headings(rel, body, TASK_HEADINGS)
+    return found + check_headings(rel, body, TASK_HEADINGS)
 
 
 def _check_handoff(root: Path, rel: str, tasks: set[str]) -> list[Problem]:
@@ -242,11 +248,11 @@ def _check_handoff(root: Path, rel: str, tasks: set[str]) -> list[Problem]:
     if isinstance(loaded, Problem):
         return [loaded]
     data, body = loaded
-    found = _check_fields(rel, data, HANDOFF_SCHEMA)
+    found = check_fields(rel, data, HANDOFF_SCHEMA)
     task = data.get("task")
     if isinstance(task, str) and task not in tasks:
         found.append(Problem(rel, "task", f"no task file for {task}"))
-    return found + _check_headings(rel, body, HANDOFF_HEADINGS)
+    return found + check_headings(rel, body, HANDOFF_HEADINGS)
 
 
 def _markdown(root: Path, rel_dir: str) -> list[str]:
@@ -317,13 +323,13 @@ def _now() -> dt.datetime:
     return dt.datetime.now(dt.UTC).replace(microsecond=0)
 
 
-def _toml(value: object) -> str:
+def toml_value(value: object) -> str:
     if isinstance(value, str):
         return json.dumps(value, ensure_ascii=False).replace("\x7f", "\\u007f")
     if isinstance(value, dt.datetime):
         return value.astimezone(dt.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
     if isinstance(value, list):
-        return "[" + ", ".join(_toml(item) for item in value) + "]"
+        return "[" + ", ".join(toml_value(item) for item in value) + "]"
     if isinstance(value, int) and not isinstance(value, bool):
         return str(value)
     raise TypeError(f"cannot write {value!r} to a state file")
@@ -331,15 +337,15 @@ def _toml(value: object) -> str:
 
 def emit(data: dict[str, object], schema: Schema) -> str:
     """The front matter block, keys in schema order, then any [[findings]] tables."""
-    lines = [f"{key} = {_toml(data[key])}" for key in schema]
+    lines = [f"{key} = {toml_value(data[key])}" for key in schema]
     findings = data.get("findings", [])
     for finding in findings if isinstance(findings, list) else []:
         lines += ["", "[[findings]]"]
-        lines += [f"{key} = {_toml(finding[key])}" for key in FINDING_SCHEMA]
+        lines += [f"{key} = {toml_value(finding[key])}" for key in FINDING_SCHEMA]
     return f"{FENCE}\n" + "\n".join(lines) + f"\n{FENCE}\n"
 
 
-def _write(path: Path, text: str) -> None:
+def write(path: Path, text: str) -> None:
     """Atomic: a temp file beside the target, then a rename. LF endings only."""
     path.parent.mkdir(parents=True, exist_ok=True)
     temp = path.with_name(path.name + ".state-tmp")
@@ -386,12 +392,12 @@ def _task_path(root: Path, task_id: str) -> Path:
 
 def _save_state(root: Path, data: dict[str, object], body: str) -> None:
     data["updated"] = _now()
-    _write(root / STATE_REL, emit(data, STATE_SCHEMA) + body)
+    write(root / STATE_REL, emit(data, STATE_SCHEMA) + body)
 
 
 def _save_task(path: Path, data: dict[str, object], body: str) -> None:
     data["updated"] = _now()
-    _write(path, emit(data, TASK_SCHEMA) + body)
+    write(path, emit(data, TASK_SCHEMA) + body)
 
 
 def _init(root: Path, args: argparse.Namespace) -> int:
@@ -429,7 +435,7 @@ def _task_new(root: Path, args: argparse.Namespace) -> int:
         "created": now,
         "updated": now,
     }
-    _write(path, emit(data, TASK_SCHEMA) + TASK_BODY)
+    write(path, emit(data, TASK_SCHEMA) + TASK_BODY)
     print(f"created {_rel(path, root)}")
     return 0
 
@@ -553,7 +559,7 @@ def _handoff(root: Path, args: argparse.Namespace) -> int:
     else:
         text = sys.stdin.read()
     text = normalise(text)
-    missing = _check_headings("handoff body", text, HANDOFF_HEADINGS)
+    missing = check_headings("handoff body", text, HANDOFF_HEADINGS)
     if missing:
         raise Invalid("; ".join(f"{p.where}: {p.message}" for p in missing))
     now = _now()
@@ -564,7 +570,7 @@ def _handoff(root: Path, args: argparse.Namespace) -> int:
         "created": now,
     }
     path = _handoff_path(root, args.task, now)
-    _write(path, emit(data, HANDOFF_SCHEMA) + "\n" + text)
+    write(path, emit(data, HANDOFF_SCHEMA) + "\n" + text)
     print(f"wrote {_rel(path, root)}")
     return 0
 
@@ -574,7 +580,7 @@ def _handoff(root: Path, args: argparse.Namespace) -> int:
 
 def _jsonable(value: object) -> object:
     if isinstance(value, dt.datetime):
-        return _toml(value)
+        return toml_value(value)
     if isinstance(value, dict):
         return {str(k): _jsonable(v) for k, v in value.items()}
     if isinstance(value, list):
@@ -591,7 +597,7 @@ def _handoff_order(rel: str, front: dict[str, object]) -> tuple[str, int, str]:
     tail = rest[len(task) + 1 :] if rest.startswith(task + "-") else ""
     if tail.isdigit():
         number = int(tail)
-    return _toml(front.get("created")) if "created" in front else "", number, rel
+    return toml_value(front.get("created")) if "created" in front else "", number, rel
 
 
 def _latest_handoff(root: Path, task_id: str) -> dict[str, object] | None:
@@ -648,7 +654,8 @@ def render(data: dict[str, object]) -> str:
     front = state["front"]
     blockers = ", ".join(front["blockers"]) or "none"
     lines = [
-        f"Phase: {front['phase']}   Track: {front['track']}   Updated: {_toml(front['updated'])}",
+        f"Phase: {front['phase']}   Track: {front['track']}   "
+        f"Updated: {toml_value(front['updated'])}",
         f"Blockers: {blockers}",
     ]
     task = data["task"]
