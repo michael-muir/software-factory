@@ -573,6 +573,33 @@ def state_problems(root: Path) -> list[str]:
     return [] if module is None else [str(p) for p in module.validate(root)]
 
 
+AGENTS_MODULE = Path(".factory") / "agents" / "agents.py"
+
+
+def load_agents_module(path: Path) -> ModuleType | None:
+    """The E03 agents module (ADR 0016), or None if this kit predates it."""
+    if not path.is_file():
+        return None
+    spec = importlib.util.spec_from_file_location("factory_agents", path)
+    if spec is None or spec.loader is None:
+        return None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules["factory_agents"] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def agent_problems(root: Path) -> tuple[list[str], list[str]]:
+    """(problems in agent files and lock records, broken locks) for E03 AC-04 and AC-10."""
+    module = load_agents_module(root / AGENTS_MODULE)
+    if module is None:
+        return [], []
+    problems = [str(p) for p in module.validate(root)]
+    if problems:
+        return problems, []
+    return [], [str(line) for line in module.verify_locks(root)]
+
+
 def parse_checks(text: str) -> list[str]:
     """`--checks a,b` -> ["a", "b"]; unknown names are a usage error (E07 AC-01)."""
     names = [name.strip() for name in text.split(",") if name.strip()]
@@ -601,6 +628,18 @@ def main(argv: Sequence[str] | None = None) -> int:
         if problems:
             listed = "".join(f"\ngate: {problem}" for problem in problems)
             raise GateError(f"invalid state files (python .factory/state/state.py check):{listed}")
+        problems, broken = agent_problems(root)
+        if problems:
+            listed = "".join(f"\ngate: {problem}" for problem in problems)
+            raise GateError(
+                f"invalid agent files or lock records (python {AGENTS_MODULE.as_posix()} check):"
+                f"{listed}"
+            )
+        if broken:
+            for line in broken:
+                print(f"gate: {line}", file=sys.stderr)
+            print("gate: FAIL: locked files changed; nothing was run (ADR 0018)", file=sys.stderr)
+            return 1
         if args.base_ref is not None:
             if not args.base_ref.strip():
                 raise GateError("--base-ref must not be empty")

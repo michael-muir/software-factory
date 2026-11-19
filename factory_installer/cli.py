@@ -136,7 +136,7 @@ def run_check(repo: Path) -> int:
         default = config_schema.toml_value(config_schema.default_for(key))
         print(f"{shown}: {key}: not set, using default {default}")
 
-    problems = state_problems(repo)
+    problems = state_problems(repo) + agent_problems(repo)
     for problem in problems:
         print(problem)
     if result.errors or problems:
@@ -155,6 +155,20 @@ def state_problems(repo: Path, kit_root: Path = KIT_ROOT) -> list[str]:
         return []
     module = importlib.util.module_from_spec(spec)
     sys.modules["factory_kit_state"] = module
+    spec.loader.exec_module(module)
+    return [str(p) for p in module.validate(repo)]
+
+
+def agent_problems(repo: Path, kit_root: Path = KIT_ROOT) -> list[str]:
+    """The target's agent-file and lock-record problems, from the kit's agents module (E03)."""
+    path = kit_root / ".factory" / "agents" / "agents.py"
+    if not path.is_file():
+        return []
+    spec = importlib.util.spec_from_file_location("factory_kit_agents", path)
+    if spec is None or spec.loader is None:
+        return []
+    module = importlib.util.module_from_spec(spec)
+    sys.modules["factory_kit_agents"] = module
     spec.loader.exec_module(module)
     return [str(p) for p in module.validate(repo)]
 
