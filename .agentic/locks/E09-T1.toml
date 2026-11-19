@@ -1,0 +1,6 @@
+task = "E09-T1"
+locked = 2026-11-19T18:27:15Z
+
+[[files]]
+path = "tests/test_core_roles_make.py"
+sha256 = "eff59ada7963e8bc0eaddebe0517c179651e92eda7c331808a4fa76d8c532ae4"
