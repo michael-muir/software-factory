@@ -4,10 +4,12 @@
     python .factory/agents/agents.py [--root PATH] lock [--replace] <task> <path>...
     python .factory/agents/agents.py [--root PATH] unlock <task>
 
-Test locks live in `.agentic/locks/<task>.toml`: one SHA-256 per locked file, taken after line
-endings are normalised (ADR 0004). The gate fails when a locked file changes (ADR 0018). This
-module is built on its sibling `state.py`, which supplies the root finder, the atomic writer and
-the problem type (ADR 0016).
+Roles are `.factory/agents/**/<name>.md` files with TOML front matter. `_schema.md` documents
+the format; files whose names start with `_` aren't roles. Test locks live in
+`.agentic/locks/<task>.toml`: one SHA-256 per locked file, taken after line endings are
+normalised (ADR 0004). The gate fails when a locked file changes (ADR 0018). This module is
+built on its sibling `state.py`, which supplies the root finder, the atomic writer and the
+problem type (ADR 0016).
 """
 
 from __future__ import annotations
@@ -29,6 +31,12 @@ if TYPE_CHECKING:
 
 STATE_PATH = Path(__file__).resolve().parent.parent / "state" / "state.py"
 NEEDS_STATE = f"agents.py needs {STATE_PATH.parent.parent.name}/state/state.py beside it"
+AGENTS_REL = ".factory/agents"
+TOOLS = ("read", "search", "edit", "write", "run", "web")
+HINTS = ("strong", "any", "different-from")
+SCOPE_KEYS = ("write", "run")
+AGENT_HEADINGS = ("## Scope", "## Inputs", "## Outputs")
+ROLE_NAME = re.compile(r"[a-z0-9-]+", re.ASCII)
 LOCKS_REL = ".agentic/locks"
 LOCK_KEYS = ("task", "locked", "files")
 FILE_KEYS = ("path", "sha256")
@@ -82,6 +90,143 @@ def bad_rel_path(path: str) -> str | None:
     if ".." in PurePosixPath(path).parts:
         return "must not contain .."
     return None
+
+
+# --- agent files (E03 AC-01 to AC-04) -----------------------------------------------------------
+
+
+def _text(value: object) -> str | None:
+    return None if isinstance(value, str) and value.strip() else "must be a non-empty string"
+
+
+def _role_name(value: object) -> str | None:
+    if not isinstance(value, str) or not ROLE_NAME.fullmatch(value):
+        return "must be lowercase letters, digits and hyphens"
+    return None
+
+
+def _hint(value: object) -> str | None:
+    return None if value in HINTS else f"must be one of {', '.join(HINTS)}"
+
+
+def _string(value: object) -> str | None:
+    return None if isinstance(value, str) else "must be a string"
+
+
+def _tools(value: object) -> str | None:
+    if not isinstance(value, list) or not value or not all(isinstance(v, str) for v in value):
+        return "must be a non-empty list of tool names"
+    unknown = [v for v in value if v not in TOOLS]
+    if unknown:
+        return f"unknown tool {unknown[0]!r}; tools are {', '.join(TOOLS)}"
+    if len(set(value)) != len(value):
+        return "lists a tool twice"
+    return None
+
+
+def _scope(value: object) -> str | None:
+    return None if isinstance(value, dict) else "must be a table ([scope])"
+
+
+AGENT_SCHEMA = {
+    "name": _role_name,
+    "title": _text,
+    "summary": _text,
+    "model_hint": _hint,
+    "different_from": _string,
+    "tools": _tools,
+    "scope": _scope,
+}
+OPTIONAL_KEYS = frozenset({"scope"})
+SCOPE_NEEDS = {"write": ("edit", "write"), "run": ("run",)}
+
+
+def _check_scope(rel: str, scope: dict[str, Any], tools: object) -> list[Problem]:
+    found: list[Problem] = []
+    listed = tools if isinstance(tools, list) else []
+    for key in sorted(scope):
+        where = f"scope.{key}"
+        value = scope[key]
+        if key not in SCOPE_KEYS:
+            found.append(
+                _problem(rel, where, f"unknown key; scope keys are {', '.join(SCOPE_KEYS)}")
+            )
+            continue
+        if not isinstance(value, list) or not value or not all(isinstance(v, str) for v in value):
+            found.append(_problem(rel, where, "must be a non-empty list of strings"))
+            continue
+        if not any(tool in listed for tool in SCOPE_NEEDS[key]):
+            needs = " or ".join(SCOPE_NEEDS[key])
+            found.append(_problem(rel, where, f"needs {needs} in tools"))
+        for item in value:
+            why = (
+                bad_rel_path(item)
+                if key == "write"
+                else (None if item.strip() else "must not be empty")
+            )
+            if why is not None:
+                found.append(_problem(rel, where, f"{item!r} {why}"))
+    return found
+
+
+def _role_files(root: Path) -> list[Path]:
+    folder = root / AGENTS_REL
+    if not folder.is_dir():
+        return []
+    return sorted(
+        (p for p in folder.rglob("*.md") if p.is_file() and not p.name.startswith("_")),
+        key=lambda p: p.relative_to(folder).as_posix(),
+    )
+
+
+def _agent_problems(root: Path) -> list[Problem]:
+    found: list[Problem] = []
+    roles: dict[str, tuple[str, dict[str, Any]]] = {}
+    for path in _role_files(root):
+        rel = path.relative_to(root).as_posix()
+        parsed = _state().parse(path.read_text(encoding="utf-8"))
+        if isinstance(parsed, str):
+            found.append(_problem(rel, _state().FRONT, parsed))
+            continue
+        data, body = parsed
+        for key, rule in AGENT_SCHEMA.items():
+            if key not in data:
+                if key not in OPTIONAL_KEYS:
+                    found.append(_problem(rel, key, "missing"))
+                continue
+            if (why := rule(data[key])) is not None:
+                found.append(_problem(rel, key, why))
+        for key in sorted(set(data) - set(AGENT_SCHEMA)):
+            found.append(_problem(rel, key, "unknown key"))
+        if isinstance(data.get("scope"), dict):
+            found += _check_scope(rel, data["scope"], data.get("tools"))
+        found += _state()._check_headings(rel, body, AGENT_HEADINGS)
+
+        name = data.get("name")
+        if isinstance(name, str) and _role_name(name) is None:
+            if name != path.stem:
+                found.append(_problem(rel, "name", f"{name!r} does not match the file name"))
+            elif name in roles:
+                found.append(_problem(rel, "name", f"{name!r} is also used by {roles[name][0]}"))
+            else:
+                roles[name] = (rel, data)
+
+    for name, (rel, data) in roles.items():
+        other = data.get("different_from")
+        if not isinstance(other, str):
+            continue
+        if data.get("model_hint") == "different-from":
+            if not other:
+                found.append(_problem(rel, "different_from", "required for different-from"))
+            elif other == name:
+                found.append(_problem(rel, "different_from", "must name another role"))
+            elif other not in roles:
+                found.append(_problem(rel, "different_from", f"no role named {other!r}"))
+        elif other:
+            found.append(
+                _problem(rel, "different_from", 'must be "" unless model_hint is different-from')
+            )
+    return found
 
 
 # --- lock records (E03 AC-09 to AC-11, ADR 0018) ------------------------------------------------
@@ -198,8 +343,8 @@ def verify_locks(root: Path) -> list[str]:
 
 
 def validate(root: Path) -> list[Problem]:
-    """Problems in the lock records, sorted by path then key (spec AC-03 and AC-11)."""
-    found = _lock_problems(root)
+    """Problems in the agent files and lock records, sorted by path then key (spec AC-03)."""
+    found = _agent_problems(root) + _lock_problems(root)
     return sorted(found, key=lambda p: (p.path, p.where))
 
 
