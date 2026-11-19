@@ -1,9 +1,9 @@
 +++
-phase = "test"
+phase = "ship"
 track = "full"
-active_task = "E04-T3"
+active_task = ""
 blockers = []
-updated = 2026-11-19T16:13:21Z
+updated = 2026-11-19T18:19:05Z
 +++
 
-E04 (#4): spec approved, design note and ADRs 0019-0020 accepted. Built in three slices, E04-T1 to E04-T3. Resume with `python .factory/state/state.py resume`.
+E04 (definition-of-done templates) is done: T1 #58, T2 #59 and T3 #60 are merged, and issue #4 is closed. No task is active. The next epic is the product owner's choice: E08 (#8), E09 (#9) and E11 (#11) have their dependencies met.
