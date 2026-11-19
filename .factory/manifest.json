@@ -22,7 +22,10 @@
     ".factory/skills/.gitkeep": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
     ".factory/standards/.gitkeep": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
     ".factory/state/state.py": "cd73f343b6cdd64e93b44f4d884b204a4344a262d2e1326f36448bfa60489959",
-    ".factory/workflow/.gitkeep": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    ".factory/workflow/docs.py": "17b11de1fc2d6ae22cf5873bfc342ae0c94bc5dc8bb07d56d0a044cd8bbdff84",
+    ".factory/workflow/templates/adr.md": "b00c6fe38d06f86e7a5fe55b2c527d983aae91bb6418a83dd869a54787cec036",
+    ".factory/workflow/templates/design.md": "ca4e7bd0fa7daf977267cf345abd8c0874759f8d5bbe75e363eb50bfc69ff4e2",
+    ".factory/workflow/templates/spec.md": "d693496d2b59fefdba7eda0c084e6a2efeb4315b443b00340b5e5ab8c7489066",
     ".github/workflows/factory-gate.yml": "bcfac1e45bc3600567b32e75d6b5e0bedbf71bb0c0ee876b65af32c60a880469"
   },
   "deleted": [],
