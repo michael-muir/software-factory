@@ -21,6 +21,8 @@ KIT_FILES = frozenset(
     {
         ".factory/.gitattributes",
         ".factory/.gitignore",
+        ".factory/agents/_schema.md",
+        ".factory/agents/_template.md",
         ".factory/agents/agents.py",
         ".factory/skills/.gitkeep",
         ".factory/standards/.gitkeep",
