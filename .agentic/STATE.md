@@ -1,9 +1,9 @@
 +++
-phase = "ship"
+phase = "design"
 track = "full"
 active_task = ""
 blockers = []
-updated = 2026-11-19T18:19:05Z
+updated = 2026-11-19T18:24:53Z
 +++
 
-E04 (definition-of-done templates) is done: T1 #58, T2 #59 and T3 #60 are merged, and issue #4 is closed. No task is active. The next epic is the product owner's choice: E08 (#8), E09 (#9) and E11 (#11) have their dependencies met.
+E09 (16 core roles, #9) has an approved spec: docs/specs/E09-core-roles.md. Next: the Architect's design note and ADRs, then slices as task files.
