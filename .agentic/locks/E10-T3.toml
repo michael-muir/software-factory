@@ -1,0 +1,6 @@
+task = "E10-T3"
+locked = 2026-11-19T21:44:21Z
+
+[[files]]
+path = "tests/test_skills_prove.py"
+sha256 = "f5c01c8437091974109dbc99497d4cee34bb33ccafb1440e6a7bff807dbcccb2"

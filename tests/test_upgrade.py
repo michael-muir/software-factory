@@ -24,7 +24,7 @@ from tests._repo import (
 )
 
 UNTOUCHED = ".factory/agents/_template.md"
-SKILLS = ".factory/skills/.gitkeep"
+SKILLS = ".factory/skills/handoff/SKILL.md"
 GATES = ".factory/gates/profiles/.gitkeep"
 ADAPTERS = ".factory/adapters/.gitkeep"
 STANDARDS = ".factory/standards/.gitkeep"
