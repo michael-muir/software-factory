@@ -63,6 +63,10 @@ def test_python_profile_matches_the_spec() -> None:
             ".factory/gates/tools/mutate_python.py",
             "--min",
             "{mutation_percent}",
+            "--scope",
+            "{mutation_scope}",
+            "--base-ref",
+            "{base_ref}",
             "{changed_files}",
         ],
     }
