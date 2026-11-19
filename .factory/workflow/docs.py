@@ -1,6 +1,7 @@
 """Software Factory document linter (E04, ADRs 0019 and 0020). Standard library only.
 
     python .factory/workflow/docs.py [--root PATH] check
+    python .factory/workflow/docs.py check-pr [FILE]      # PR evidence; stdin without FILE
 
 Specs (docs/specs/), design notes (docs/design/) and ADRs (docs/adr/) must have the parts their
 templates in templates/ show: a title, a Status line, required lines and headings, and for a
@@ -165,6 +166,8 @@ KINDS = {
     ),
 }
 NOT_DOCUMENTS = frozenset({"README.md"})
+PR_HEADINGS = ("## What changes", "## Acceptance criteria", "## Gate evidence", "## Findings")
+VERDICT = re.compile(r"\*\*(PASS|FAIL)\*\*")
 
 
 def lint(kind_name: str, rel: str, text: str, root: Path | None = None) -> list[Problem]:
@@ -196,6 +199,29 @@ def lint(kind_name: str, rel: str, text: str, root: Path | None = None) -> list[
             found.append(state.Problem(rel, heading, "missing heading"))
     if kind.extra is not None and status:
         found += kind.extra(rel, key, body, status, root)
+    return found
+
+
+def _section(lines: Sequence[str], heading: str) -> str:
+    """The text under the first heading that matches, up to the next ## heading."""
+    start = next((i for i, line in enumerate(lines) if _has_heading([line], heading)), None)
+    if start is None:
+        return ""
+    end = next((i for i in range(start + 1, len(lines)) if lines[i].startswith("## ")), len(lines))
+    return "\n".join(lines[start + 1 : end])
+
+
+def lint_pr(text: str, name: str) -> list[Problem]:
+    """Problems in PR evidence (spec AC-06): four headings, and a verdict in the gate evidence."""
+    lines = _outside_fences(text.replace("\r\n", "\n")).split("\n")
+    found = [
+        state.Problem(name, heading, "missing heading")
+        for heading in PR_HEADINGS
+        if not _has_heading(lines, heading)
+    ]
+    evidence = "## Gate evidence"
+    if _has_heading(lines, evidence) and not VERDICT.search(_section(lines, evidence)):
+        found.append(state.Problem(name, evidence, "no verdict: **PASS** or **FAIL**"))
     return found
 
 
@@ -238,6 +264,14 @@ def _check(root: Path, args: argparse.Namespace) -> int:
     return 0
 
 
+def _check_pr(root: Path, args: argparse.Namespace) -> int:
+    text = Path(args.file).read_text(encoding="utf-8") if args.file else sys.stdin.read()
+    found = lint_pr(text, args.file or "stdin")
+    for problem in found:
+        print(problem)
+    return 1 if found else 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="docs.py", description=__doc__.split("\n")[0])
     parser.add_argument(
@@ -247,6 +281,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     commands.add_parser(
         "check", help="lint the specs, design notes and ADRs under docs/"
     ).set_defaults(run=_check)
+    check_pr = commands.add_parser("check-pr", help="check PR evidence (stdin without FILE)")
+    check_pr.add_argument("file", nargs="?", help="a file holding the PR body")
+    check_pr.set_defaults(run=_check_pr)
     args = parser.parse_args(argv)
     if state is None:
         print(NEEDS_STATE, file=sys.stderr)
