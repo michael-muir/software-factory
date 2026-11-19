@@ -1,9 +1,9 @@
 +++
-phase = "design"
+phase = "test"
 track = "full"
-active_task = ""
+active_task = "E12-T1"
 blockers = []
-updated = 2026-11-19T22:15:36Z
+updated = 2026-11-19T22:22:15Z
 +++
 
-E12 (tool adapters, #12) has an approved spec: docs/specs/E12-tool-adapters.md. Next: the Architect confirms each tool's hook payload fields (assumption 5), then the design note and ADRs.
+E12 (#12): spec approved, design note and ADRs 0023-0024 accepted. Built in three slices, E12-T1 to E12-T3. Resume with `python .factory/state/state.py resume`.
