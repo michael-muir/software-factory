@@ -1,0 +1,6 @@
+task = "E03-T1"
+locked = 2026-11-19T02:40:16Z
+
+[[files]]
+path = "tests/test_agents_locks.py"
+sha256 = "f29eaf626f06aafff10a2f80744d968d4aee97c3d477c23bc25c87b30c4308c8"
