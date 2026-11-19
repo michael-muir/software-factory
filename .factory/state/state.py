@@ -1,6 +1,7 @@
 """Software Factory state files (E02, ADRs 0014 and 0015). Standard library only.
 
     python .factory/state/state.py check [PATH]
+    python .factory/state/state.py [--root PATH] {init,task,finding,start,block,unblock,handoff} ...
 
 State lives in `.agentic/` as Markdown files that start with a strict TOML front matter between
 `+++` lines: STATE.md (phase, track, active task, blockers), tasks/<id>.md (one per slice) and
@@ -12,6 +13,8 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import json
+import os
 import re
 import sys
 import tomllib
@@ -295,19 +298,359 @@ def _check(args: argparse.Namespace) -> int:
     return 0
 
 
+# --- writing (E02 AC-06 to AC-13, ADR 0014) ----------------------------------------------------
+
+TASK_ID = re.compile(r"[A-Za-z0-9._-]+", re.ASCII)
+DEFAULT_STATE_BODY = "\nNotes for the next session.\n"
+TASK_BODY = "\n" + "\n\n".join(TASK_HEADINGS) + "\n"
+
+
+class Refused(Exception):
+    """An action the state files don't allow: exit 1 with the message."""
+
+
+class Invalid(Exception):
+    """An invalid value given on the command line: exit 2 with the message."""
+
+
+def _now() -> dt.datetime:
+    return dt.datetime.now(dt.UTC).replace(microsecond=0)
+
+
+def _toml(value: object) -> str:
+    if isinstance(value, str):
+        return json.dumps(value, ensure_ascii=False).replace("\x7f", "\\u007f")
+    if isinstance(value, dt.datetime):
+        return value.astimezone(dt.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    if isinstance(value, list):
+        return "[" + ", ".join(_toml(item) for item in value) + "]"
+    if isinstance(value, int) and not isinstance(value, bool):
+        return str(value)
+    raise TypeError(f"cannot write {value!r} to a state file")
+
+
+def emit(data: dict[str, object], schema: Schema) -> str:
+    """The front matter block, keys in schema order, then any [[findings]] tables."""
+    lines = [f"{key} = {_toml(data[key])}" for key in schema]
+    findings = data.get("findings", [])
+    for finding in findings if isinstance(findings, list) else []:
+        lines += ["", "[[findings]]"]
+        lines += [f"{key} = {_toml(finding[key])}" for key in FINDING_SCHEMA]
+    return f"{FENCE}\n" + "\n".join(lines) + f"\n{FENCE}\n"
+
+
+def _write(path: Path, text: str) -> None:
+    """Atomic: a temp file beside the target, then a rename. LF endings only."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temp = path.with_name(path.name + ".state-tmp")
+    temp.write_bytes(normalise(text).encode("utf-8"))
+    try:
+        os.replace(temp, path)
+    except OSError:
+        temp.unlink(missing_ok=True)
+        raise
+
+
+def _rel(path: Path, root: Path) -> str:
+    return path.relative_to(root).as_posix()
+
+
+def _require_valid(root: Path) -> None:
+    found = validate(root)
+    if found:
+        for problem in found:
+            print(problem)
+        raise Refused("the state files are invalid; fix them first (state.py check)")
+
+
+def _read(path: Path) -> tuple[dict[str, object], str]:
+    parsed = parse(path.read_text(encoding="utf-8"))
+    if isinstance(parsed, str):  # pragma: no cover - callers validate first
+        raise Refused(f"{path.name}: {parsed}")
+    return parsed
+
+
+def _state(root: Path) -> tuple[dict[str, object], str]:
+    path = root / STATE_REL
+    if not path.is_file() or normalise(path.read_text(encoding="utf-8")) == E01_PLACEHOLDER:
+        raise Refused("no STATE.md yet; run state.py init")
+    return _read(path)
+
+
+def _task_path(root: Path, task_id: str) -> Path:
+    path = root / TASKS_REL / f"{task_id}.md"
+    if not TASK_ID.fullmatch(task_id) or not path.is_file():
+        raise Refused(f"no task {task_id!r} in {TASKS_REL}/")
+    return path
+
+
+def _save_state(root: Path, data: dict[str, object], body: str) -> None:
+    data["updated"] = _now()
+    _write(root / STATE_REL, emit(data, STATE_SCHEMA) + body)
+
+
+def _save_task(path: Path, data: dict[str, object], body: str) -> None:
+    data["updated"] = _now()
+    _write(path, emit(data, TASK_SCHEMA) + body)
+
+
+def _init(root: Path, args: argparse.Namespace) -> int:
+    path = root / STATE_REL
+    body = DEFAULT_STATE_BODY
+    if path.is_file():
+        text = normalise(path.read_text(encoding="utf-8"))
+        if text.startswith(FENCE + "\n"):
+            if not args.force:
+                raise Refused(f"{STATE_REL} already exists; use --force to replace it")
+            parsed = parse(text)
+            body = parsed[1] if not isinstance(parsed, str) else DEFAULT_STATE_BODY
+        elif text != E01_PLACEHOLDER:
+            body = "\n" + text
+    data: dict[str, object] = {"phase": "spec", "track": "full", "active_task": "", "blockers": []}
+    _save_state(root, data, body)
+    print(f"wrote {STATE_REL}")
+    return 0
+
+
+def _task_new(root: Path, args: argparse.Namespace) -> int:
+    _require_valid(root)
+    task_id: str = args.id
+    if not TASK_ID.fullmatch(task_id):
+        raise Refused(f"task id {task_id!r} must use only A-Z, a-z, 0-9, '.', '_' and '-'")
+    path = root / TASKS_REL / f"{task_id}.md"
+    if path.exists():
+        raise Refused(f"task {task_id} already exists ({_rel(path, root)})")
+    now = _now()
+    data: dict[str, object] = {
+        "id": task_id,
+        "title": args.title,
+        "status": "todo",
+        "review_round": 0,
+        "created": now,
+        "updated": now,
+    }
+    _write(path, emit(data, TASK_SCHEMA) + TASK_BODY)
+    print(f"created {_rel(path, root)}")
+    return 0
+
+
+def _task_set(root: Path, args: argparse.Namespace) -> int:
+    if args.status is None and args.round is None:
+        raise Invalid("give --status and/or --round")
+    if args.round is not None and args.round < 0:
+        raise Invalid("--round must be 0 or more")
+    _require_valid(root)
+    path = _task_path(root, args.id)
+    data, body = _read(path)
+    if args.status is not None:
+        data["status"] = args.status
+    if args.round is not None:
+        data["review_round"] = args.round
+    _save_task(path, data, body)
+    print(f"updated {_rel(path, root)}")
+    return 0
+
+
+def _findings_of(data: dict[str, object]) -> list[dict[str, object]]:
+    value = data.get("findings", [])
+    return value if isinstance(value, list) else []
+
+
+def _finding_add(root: Path, args: argparse.Namespace) -> int:
+    _require_valid(root)
+    path = _task_path(root, args.id)
+    data, body = _read(path)
+    findings = _findings_of(data)
+    numbers = [int(str(f["id"])[1:]) for f in findings]
+    finding_id = f"F{max(numbers, default=0) + 1}"
+    findings.append(
+        {"id": finding_id, "severity": args.severity, "status": "open", "summary": args.summary}
+    )
+    data["findings"] = findings
+    _save_task(path, data, body)
+    print(f"added {finding_id} to {_rel(path, root)}")
+    return 0
+
+
+def _finding_set(root: Path, args: argparse.Namespace) -> int:
+    _require_valid(root)
+    path = _task_path(root, args.id)
+    data, body = _read(path)
+    matches = [f for f in _findings_of(data) if f.get("id") == args.finding]
+    if not matches:
+        raise Refused(f"task {args.id} has no finding {args.finding}")
+    matches[0]["status"] = args.status
+    _save_task(path, data, body)
+    print(f"updated {args.finding} in {_rel(path, root)}")
+    return 0
+
+
+def _start(root: Path, args: argparse.Namespace) -> int:
+    _require_valid(root)
+    state, state_body = _state(root)
+    path = _task_path(root, args.id)
+    task, task_body = _read(path)
+    task["status"] = "in-progress"
+    _save_task(path, task, task_body)
+    state["active_task"] = args.id
+    if args.phase is not None:
+        state["phase"] = args.phase
+    if args.track is not None:
+        state["track"] = args.track
+    _save_state(root, state, state_body)
+    print(f"started {args.id}")
+    return 0
+
+
+def _blockers(data: dict[str, object]) -> list[str]:
+    value = data.get("blockers", [])
+    return [str(item) for item in value] if isinstance(value, list) else []
+
+
+def _block(root: Path, args: argparse.Namespace) -> int:
+    _require_valid(root)
+    data, body = _state(root)
+    blockers = _blockers(data)
+    if args.reason not in blockers:
+        blockers.append(args.reason)
+    data["blockers"] = blockers
+    _save_state(root, data, body)
+    print(f"blocked: {args.reason}")
+    return 0
+
+
+def _unblock(root: Path, args: argparse.Namespace) -> int:
+    _require_valid(root)
+    data, body = _state(root)
+    blockers = _blockers(data)
+    if args.reason is None:
+        blockers = []
+    elif args.reason in blockers:
+        blockers.remove(args.reason)
+    else:
+        raise Refused(f"no blocker {args.reason!r}")
+    data["blockers"] = blockers
+    _save_state(root, data, body)
+    print("unblocked")
+    return 0
+
+
+def _handoff_path(root: Path, task_id: str, now: dt.datetime) -> Path:
+    stem = f"{now.astimezone(dt.UTC):%Y%m%dT%H%M%SZ}-{task_id}"
+    directory = root / HANDOFFS_REL
+    path, number = directory / f"{stem}.md", 1
+    while path.exists():
+        number += 1
+        path = directory / f"{stem}-{number}.md"
+    return path
+
+
+def _handoff(root: Path, args: argparse.Namespace) -> int:
+    _require_valid(root)
+    _task_path(root, args.task)
+    if args.body_file is not None:
+        text = Path(args.body_file).read_text(encoding="utf-8")
+    else:
+        text = sys.stdin.read()
+    text = normalise(text)
+    missing = _check_headings("handoff body", text, HANDOFF_HEADINGS)
+    if missing:
+        raise Invalid("; ".join(f"{p.where}: {p.message}" for p in missing))
+    now = _now()
+    data: dict[str, object] = {
+        "task": args.task,
+        "from": args.sender,
+        "to": args.to,
+        "created": now,
+    }
+    path = _handoff_path(root, args.task, now)
+    _write(path, emit(data, HANDOFF_SCHEMA) + "\n" + text)
+    print(f"wrote {_rel(path, root)}")
+    return 0
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="state.py", description="Software Factory state files.")
+    parser.add_argument(
+        "--root", help="repository root (default: the nearest folder holding .agentic/)"
+    )
     commands = parser.add_subparsers(dest="command", required=True)
+
     check = commands.add_parser("check", help="validate STATE.md, task files and handoffs")
-    check.add_argument("path", nargs="?", default=".", help="repository root (default: .)")
-    check.set_defaults(run=_check)
+    check.add_argument("path", nargs="?", default=None, help="repository root (default: .)")
+    check.set_defaults(run=None)
+
+    init = commands.add_parser("init", help="write a fresh STATE.md")
+    init.add_argument("--force", action="store_true", help="replace an existing STATE.md")
+    init.set_defaults(run=_init)
+
+    task = commands.add_parser("task", help="create or update a task file").add_subparsers(
+        dest="task_command", required=True
+    )
+    new = task.add_parser("new", help="create tasks/<id>.md")
+    new.add_argument("id")
+    new.add_argument("title")
+    new.set_defaults(run=_task_new)
+    set_ = task.add_parser("set", help="set a task's status and/or review round")
+    set_.add_argument("id")
+    set_.add_argument("--status", choices=TASK_STATUSES)
+    set_.add_argument("--round", type=int)
+    set_.set_defaults(run=_task_set)
+
+    finding = commands.add_parser("finding", help="record review findings").add_subparsers(
+        dest="finding_command", required=True
+    )
+    add = finding.add_parser("add", help="add an open finding to a task")
+    add.add_argument("id")
+    add.add_argument("--severity", choices=SEVERITIES, required=True)
+    add.add_argument("summary")
+    add.set_defaults(run=_finding_add)
+    fset = finding.add_parser("set", help="change a finding's status")
+    fset.add_argument("id")
+    fset.add_argument("finding")
+    fset.add_argument("--status", choices=FINDING_STATUSES, required=True)
+    fset.set_defaults(run=_finding_set)
+
+    start = commands.add_parser("start", help="make a task the active one")
+    start.add_argument("id")
+    start.add_argument("--phase", choices=PHASES)
+    start.add_argument("--track", choices=TRACKS)
+    start.set_defaults(run=_start)
+
+    block = commands.add_parser("block", help="add a blocker")
+    block.add_argument("reason")
+    block.set_defaults(run=_block)
+    unblock = commands.add_parser("unblock", help="remove a blocker, or all of them")
+    unblock.add_argument("reason", nargs="?")
+    unblock.set_defaults(run=_unblock)
+
+    handoff = commands.add_parser("handoff", help="write a handoff note for a task")
+    handoff.add_argument("task")
+    handoff.add_argument("--from", dest="sender", required=True, help="who is handing off")
+    handoff.add_argument("--to", default="", help="who should pick it up (default: anyone)")
+    handoff.add_argument("--body-file", help="the note's body (default: read stdin)")
+    handoff.set_defaults(run=_handoff)
     return parser
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parser().parse_args(argv)
-    run: Callable[[argparse.Namespace], int] = args.run
-    return run(args)
+    if args.command == "check":
+        args.path = args.path if args.path is not None else (args.root or ".")
+        return _check(args)
+    root = find_root(Path(args.root or "."))
+    run: Callable[[Path, argparse.Namespace], int] = args.run
+    try:
+        return run(root, args)
+    except Refused as exc:
+        print(f"state.py: {exc}", file=sys.stderr)
+        return 1
+    except Invalid as exc:
+        print(f"state.py: {exc}", file=sys.stderr)
+        return 2
+    except OSError as exc:
+        print(f"state.py: {exc}", file=sys.stderr)
+        return 1
 
 
 if __name__ == "__main__":
