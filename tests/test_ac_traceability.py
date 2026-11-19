@@ -88,3 +88,14 @@ def test_e03_spec_defines_ac_01_to_ac_14() -> None:
 def test_every_e03_ac_has_a_test(request: pytest.FixtureRequest) -> None:
     missing = spec_ac_ids("E03") - request.config.stash[COLLECTED_AC_IDS]
     assert not missing, f"E03 ACs with no test: {sorted(missing)}"
+
+
+@pytest.mark.ac("E09-AC-11")
+def test_e09_spec_defines_ac_01_to_ac_11() -> None:
+    assert spec_ac_ids("E09") == {f"E09-AC-{n:02d}" for n in range(1, 12)}
+
+
+@pytest.mark.ac("E09-AC-11")
+def test_every_e09_ac_has_a_test(request: pytest.FixtureRequest) -> None:
+    missing = spec_ac_ids("E09") - request.config.stash[COLLECTED_AC_IDS]
+    assert not missing, f"E09 ACs with no test: {sorted(missing)}"
