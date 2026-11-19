@@ -35,3 +35,10 @@ The gate's model is exit codes only (E05). Neither cosmic-ray nor Stryker exits 
 - A mutation score can never be inflated by a broken environment. A missing pytest becomes exit 2, not a perfect score.
 - Mutation stays inside its timeout on large changes. The cost is that a sample can miss a weak spot that a full run would find; repeated runs on changed code over time narrow that gap.
 - The Python helper depends on cosmic-ray's session schema. The helper tests run the real tool, so an incompatible upgrade fails visibly.
+
+## Amendment (code review, 19 Nov 2026)
+
+- **Mutation never touches the working tree.** cosmic-ray swaps each mutant into the file it mutates. A run that was killed partway, which the Watchdog does by design to runaway workers, could leave a mutant in a worktree that the Integrator might then commit. `mutate_python.py` now runs cosmic-ray in a copy: the files git sees (tracked, and untracked but not ignored), in a fresh repo inside the helper's temporary directory. Stryker already works in its own sandbox.
+- **The copy is proven before it is trusted.** The helper runs the kill test once on the copy before any mutation. A copy missing something the tests need would fail every test run, count every mutant as killed, and fake a perfect score. This costs one extra test run per mutation check. When the copy's tests fail, the helper runs them once in the project too:
+  - **Both fail:** the tests really are red. Mutation isn't scored and exits 0, and the `tests` check fails the gate, so a red suite still breaks one check only (E06 AC-10).
+  - **Only the copy fails:** the copy is broken. The helper exits 2, an environment error, and never passes.

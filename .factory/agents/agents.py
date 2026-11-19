@@ -77,8 +77,8 @@ class Unusable(Exception):
 
 
 def lf_sha256(data: bytes) -> str:
-    """SHA-256 of the bytes with CRLF and CR turned into LF (ADR 0004)."""
-    return hashlib.sha256(data.replace(b"\r\n", b"\n").replace(b"\r", b"\n")).hexdigest()
+    """SHA-256 of the bytes with CRLF turned into LF: the manifest's hash (ADR 0004)."""
+    return hashlib.sha256(data.replace(b"\r\n", b"\n")).hexdigest()
 
 
 def bad_rel_path(path: str) -> str | None:

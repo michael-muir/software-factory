@@ -3,10 +3,11 @@
 Usage:
     python .factory/gates/tools/mutate_python.py --min PERCENT FILE...
 
-Runs cosmic-ray on the given non-test files with the interpreter running this script, then
-compares the share of killed mutants to PERCENT.
-Exit codes: 0 at or above PERCENT, or nothing to mutate; 1 below; 2 a missing tool or bad
-settings in [tool.software-factory.mutation].
+Runs cosmic-ray on the given non-test files with the interpreter running this script, in a copy
+of the project (never the working tree), then compares the share of killed mutants to PERCENT.
+Exit codes: 0 at or above PERCENT, nothing to mutate, or tests that already fail (the tests check
+reports those); 1 below; 2 a missing tool, bad settings in [tool.software-factory.mutation], or a
+copy whose tests fail where the project's pass.
 """
 
 from __future__ import annotations
@@ -116,6 +117,30 @@ def content_seed(root: Path, files: Sequence[str]) -> bytes:
     return digest.digest()
 
 
+def project_copy(root: Path, dest: Path) -> None:
+    """The files git sees (tracked, and untracked but not ignored), copied into a fresh repo.
+
+    cosmic-ray swaps each mutant into the files it mutates, so it runs here: a killed or
+    interrupted run can never leave a mutant in the working tree.
+    """
+    listed = subprocess.run(
+        ["git", "ls-files", "-z", "--cached", "--others", "--exclude-standard"],
+        cwd=root,
+        capture_output=True,
+        check=True,
+    ).stdout
+    for rel in filter(None, listed.decode("utf-8", errors="surrogateescape").split("\0")):
+        source = root / rel
+        if source.is_file():
+            (dest / rel).parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, dest / rel)
+    subprocess.run(["git", "init", "-q"], cwd=dest, capture_output=True, check=True)
+
+
+def tests_pass(command: Sequence[str], cwd: Path) -> bool:
+    return subprocess.run(list(command), cwd=cwd, capture_output=True, check=False).returncode == 0
+
+
 def _require(module: str, name: str) -> None:
     if importlib.util.find_spec(module) is None:
         raise HelperError(f"{name} is not installed in this environment ({sys.executable})")
@@ -185,9 +210,23 @@ def run(root: Path, files: Sequence[str], minimum: float) -> int:
 
     workdir = Path(tempfile.mkdtemp(prefix="factory-mutate-"))
     try:
-        config, session = workdir / "cosmic-ray.toml", workdir / "session.sqlite"
-        _write_config(config, sources, test_command(sys.executable, settings.test_args))
-        _cosmic_ray("init", str(config), str(session), cwd=root)
+        copy, config, session = (
+            workdir / "project",
+            workdir / "cosmic-ray.toml",
+            workdir / "session.sqlite",
+        )
+        command = test_command(sys.executable, settings.test_args)
+        project_copy(root, copy)
+        if not tests_pass(command, copy):
+            if tests_pass(command, root):
+                raise HelperError(
+                    "the tests pass in the project but fail in the copy that mutation runs in; "
+                    "do they need a git-ignored file or the git history?"
+                )
+            print("the tests fail without any mutation, so mutants can't be scored")
+            return 0  # the tests check reports the failure (E06 AC-10)
+        _write_config(config, sources, command)
+        _cosmic_ray("init", str(config), str(session), cwd=copy)
 
         keys = _stable_keys(session)
         total = len(keys)
@@ -201,7 +240,7 @@ def run(root: Path, files: Sequence[str], minimum: float) -> int:
         else:
             print(f"testing all {total} mutants")
 
-        _cosmic_ray("exec", str(config), str(session), cwd=root)
+        _cosmic_ray("exec", str(config), str(session), cwd=copy)
         killed, survived = _score(session)
     finally:
         shutil.rmtree(workdir, ignore_errors=True)
