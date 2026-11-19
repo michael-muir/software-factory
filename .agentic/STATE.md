@@ -1,9 +1,9 @@
 +++
-phase = "ship"
+phase = "design"
 track = "full"
 active_task = ""
 blockers = []
-updated = 2026-11-19T02:02:04Z
+updated = 2026-11-19T02:29:49Z
 +++
 
-E02 (state files) is done: T1 #49, T2 #50 and T3 #51 are merged and issue #2 is closed. No task is active. The next epic is the product owner's choice; E03 (#3), E04 (#4) and E11 (#11) have their dependencies met.
+E02 is done. E03 (agent schema and tool scoping, #3) has an approved spec: docs/specs/E03-agent-schema.md. Next: the Architect's design note and ADRs, then slices as task files.
