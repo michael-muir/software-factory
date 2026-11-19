@@ -1,10 +1,10 @@
 +++
 id = "REVIEW-T2"
 title = "Code review: lock hashes, mutation on a temp copy, lock status in the gate report"
-status = "todo"
+status = "in-progress"
 review_round = 0
 created = 2026-11-19T07:37:03Z
-updated = 2026-11-19T07:37:03Z
+updated = 2026-11-19T07:54:01Z
 +++
 
 ## Goal
