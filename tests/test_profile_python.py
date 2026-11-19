@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tomllib
@@ -151,12 +152,23 @@ def test_kill_test_uses_the_pinned_interpreter() -> None:
     ]
 
 
+def only_git_on_path(folder: Path) -> str:
+    """A PATH with git (the helper copies the project with it) and no Python."""
+    git = shutil.which("git")
+    assert git is not None
+    if os.name == "nt":  # Git for Windows keeps git.exe in a folder of its own (Git\\cmd)
+        return str(Path(git).parent)
+    folder.mkdir()
+    (folder / "git").symlink_to(git)
+    return str(folder)
+
+
 @pytest.mark.slow
 @pytest.mark.ac("E06-AC-05")
 def test_helper_works_with_no_python_on_path(tmp_path: Path) -> None:
     project = python_project(tmp_path / "p")
     env = dict(os.environ)
-    env["PATH"] = ""
+    env["PATH"] = only_git_on_path(tmp_path / "bin")
     result = run_helper(project, "--min", "60", "calc.py", env=env)
     assert result.returncode == 0, result.stdout + result.stderr
 

@@ -472,10 +472,13 @@ class Report:
     profiles: list[str]
     changed_files: list[str]
     results: list[Result]
+    locked: int = 0  # files under test locks (E03, ADR 0018)
+    broken_locks: list[str] = dataclasses.field(default_factory=list)
 
     @property
     def verdict(self) -> str:
-        return "fail" if any(r.status == "fail" for r in self.results) else "pass"
+        failed = self.broken_locks or any(r.status == "fail" for r in self.results)
+        return "fail" if failed else "pass"
 
     def to_json(self) -> str:
         data = {
@@ -484,12 +487,22 @@ class Report:
             "base_ref": self.base_ref,
             "profiles": self.profiles,
             "changed_files": self.changed_files,
+            "locks": {"locked": self.locked, "broken": self.broken_locks},
             "checks": [dataclasses.asdict(r) for r in self.results],
         }
         return json.dumps(data, indent=2)
 
     def to_text(self) -> str:
-        lines = [f"Gate: {self.root}", f"Base: {self.base_ref}"]
+        files = "file" if self.locked == 1 else "files"
+        state = f"{len(self.broken_locks)} broken" if self.broken_locks else "none changed"
+        lines = [
+            f"Gate: {self.root}",
+            f"Base: {self.base_ref}",
+            f"Locks: {self.locked} locked {files}, {state}",
+        ]
+        lines += [f"  {line}" for line in self.broken_locks]
+        if self.broken_locks:
+            lines.append("  Nothing was run: locked tests changed (ADR 0018).")
         width = max((len(name) for name in self.profiles), default=0)
         for r in self.results:
             took = f"{r.duration_s:.2f}s" if r.duration_s is not None else "-"
@@ -548,15 +561,15 @@ def state_problems(root: Path) -> list[str]:
     return [] if module is None else [str(p) for p in module.validate(root)]
 
 
-def agent_problems(root: Path) -> tuple[list[str], list[str]]:
-    """(problems in agent files and lock records, broken locks) for E03 AC-04 and AC-10."""
+def agent_problems(root: Path) -> tuple[list[str], int, list[str]]:
+    """(problems in agent files and lock records, locked files, broken locks): E03 AC-04, AC-10."""
     module = _load_module(root / AGENTS_MODULE, "factory_agents")
     if module is None:
-        return [], []
-    problems = [str(p) for p in module.validate(root)]
-    if problems:
-        return problems, []
-    return [], [str(line) for line in module.verify_locks(root)]
+        return [], 0, []
+    checked = module.validate(root)
+    if checked:
+        return [str(p) for p in checked], 0, []
+    return [], len(checked.locks), [str(line) for line in module.verify_locks(root)]
 
 
 def parse_checks(text: str) -> list[str]:
@@ -587,18 +600,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         if problems:
             listed = "".join(f"\ngate: {problem}" for problem in problems)
             raise GateError(f"invalid state files (python .factory/state/state.py check):{listed}")
-        problems, broken = agent_problems(root)
+        problems, locked, broken = agent_problems(root)
         if problems:
             listed = "".join(f"\ngate: {problem}" for problem in problems)
             raise GateError(
                 f"invalid agent files or lock records (python {AGENTS_MODULE.as_posix()} check):"
                 f"{listed}"
             )
-        if broken:
-            for line in broken:
-                print(f"gate: {line}", file=sys.stderr)
-            print("gate: FAIL: locked files changed; nothing was run (ADR 0018)", file=sys.stderr)
-            return 1
         if args.base_ref is not None:
             if not args.base_ref.strip():
                 raise GateError("--base-ref must not be empty")
@@ -608,9 +616,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"gate: {exc}", file=sys.stderr)
         return 2
     files = FileSource(root, settings)
-    results = run_profiles(root, selected, settings, files, only)
+    results = [] if broken else run_profiles(root, selected, settings, files, only)
     names = [p.name for p in selected]
-    report = Report(str(root), settings.base_ref, names, files.changed or [], results)
+    report = Report(
+        str(root), settings.base_ref, names, files.changed or [], results, locked, broken
+    )
     print(report.to_json() if args.json else report.to_text())
     return 0 if report.verdict == "pass" else 1
 

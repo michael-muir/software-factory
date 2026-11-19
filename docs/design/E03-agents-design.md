@@ -87,7 +87,7 @@ The whole body runs inside `try`/`except BaseException`, so a crash prints the e
 - `unlock(root, task)`
 - `verify_locks(root) -> list[str]`, one line per changed or missing file
 
-The hash is SHA-256 of the file's bytes after CRLF and CR are turned into LF, the same as the manifest (ADR 0004). Writes use `state._write`.
+The hash is SHA-256 of the file's bytes after CRLF is turned into LF, the same as the manifest (ADR 0004; amended in ADR 0018). Writes use `state._write`.
 
 **Validate.** `validate(root) -> list[Problem]` covers the agent files and the lock records. `verify_locks` is separate, because a changed lock is a gate failure (exit 1), not invalid configuration (exit 2).
 
