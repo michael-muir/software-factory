@@ -65,7 +65,11 @@ def repo_with(
 
 
 def front(text: str) -> tuple[dict[str, object], str]:
-    """Front matter whose values are JSON literals (design note), and the rest of the file."""
+    """Front matter whose values are JSON literals (design note), and the rest of the file.
+
+    One blank line follows the front matter, as Prettier writes it, so the files pass a
+    repo's Markdown format check.
+    """
     lines = text.split("\n")
     assert lines[0] == "---", lines[0]
     end = lines.index("---", 1)
@@ -74,7 +78,8 @@ def front(text: str) -> tuple[dict[str, object], str]:
         key, _, value = line.partition(": ")
         assert key not in data, f"{key} twice"
         data[key] = json.loads(value)
-    return data, "\n".join(lines[end + 1 :])
+    assert lines[end + 1] == "", "one blank line after the front matter"
+    return data, "\n".join(lines[end + 2 :])
 
 
 def card(name: str) -> tuple[dict[str, object], str]:
