@@ -215,15 +215,28 @@ def test_cosmic_ray_runs_in_a_copy_not_the_repo(
     assert not fake.cwds[0].exists(), "the copy is removed afterwards"
 
 
-def test_red_tests_before_mutation_stop_the_run(
+def test_red_tests_are_not_scored_and_not_failed_twice(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """A copy whose tests already fail would score every mutant as killed: refuse it."""
+    """Red tests fail the tests check; mutation must not fail too (E06 AC-10), nor score them."""
     root = project(tmp_path, test_body="    assert add(2, 3) == 6\n")
     fake = FakeCosmicRay()
     monkeypatch.setattr(mutate_python, "_cosmic_ray", fake)
-    assert mutate_python.run(root, ["calc.py"], 60.0) == 1
-    assert "fail before any mutation" in capsys.readouterr().out
+    assert mutate_python.run(root, ["calc.py"], 60.0) == 0
+    assert "fail without any mutation" in capsys.readouterr().out
+    assert fake.cwds == []
+
+
+def test_a_copy_that_fails_where_the_project_passes_is_an_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A broken copy would count every mutant as killed: exit 2, never a false pass."""
+    body = "    assert open('ignored.txt').read() == 'secret\\n'\n"
+    root = project(tmp_path, test_body=body)
+    fake = FakeCosmicRay()
+    monkeypatch.setattr(mutate_python, "_cosmic_ray", fake)
+    with pytest.raises(mutate_python.HelperError, match="copy"):
+        mutate_python.run(root, ["calc.py"], 60.0)
     assert fake.cwds == []
 
 
