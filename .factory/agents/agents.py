@@ -621,6 +621,51 @@ CLAUDE_CODE_TOOLS = {
     "WebFetch": "web",
     "WebSearch": "web",
 }
+# --- the adapters' tables: neutral tool -> each tool's agent-file names (E12, ADR 0023) ----------
+
+CLAUDE_CODE_AGENT_TOOLS = {
+    "read": ["Read"],
+    "search": ["Glob", "Grep"],
+    "edit": ["Edit", "MultiEdit", "NotebookEdit"],
+    "write": ["Write"],
+    "run": ["Bash"],
+    "web": ["WebFetch", "WebSearch"],
+}
+COPILOT_AGENT_TOOLS = {
+    "read": "read",
+    "search": "search",
+    "edit": "edit",
+    "write": "edit",  # Copilot's edit alias covers creating files too
+    "run": "execute",
+    "web": "web",
+}
+
+
+@dataclass(frozen=True)
+class RoleCard:
+    source: str  # repo-relative path of the role file
+    name: str
+    summary: str
+    tools: tuple[str, ...]
+    body: str
+
+
+def role_cards(root: Path) -> list[RoleCard]:
+    """Every valid role, sorted by name. Raises Unusable when the agent files are invalid."""
+    if validate(root).problems:
+        raise Unusable(f"invalid agent files, lock records or skills; {CHECK_HINT}")
+    cards: list[RoleCard] = []
+    for path in _role_files(root):
+        parsed = state.parse(path.read_text(encoding="utf-8"))
+        if isinstance(parsed, str):  # pragma: no cover - validate() reported it already
+            continue
+        data, body = parsed
+        tools = tuple(str(tool) for tool in data["tools"])
+        rel = path.relative_to(root).as_posix()
+        cards.append(RoleCard(rel, str(data["name"]), str(data["summary"]), tools, body))
+    return sorted(cards, key=lambda card: card.name)
+
+
 CLAUDE_CODE_PATHS = {
     "Edit": "file_path",
     "MultiEdit": "file_path",

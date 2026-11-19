@@ -27,5 +27,8 @@ python_command = ["python"]  # runs the gate, e.g. ["uv", "run", "python"]
 [models]
 cross_model_vendor = "openai"
 
+[adapters]
+tools = ["claude-code", "copilot", "cursor"]  # the coding tools build.py writes files for
+
 [telemetry]
 enabled = false
