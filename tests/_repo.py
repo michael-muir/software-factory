@@ -41,7 +41,9 @@ KIT_FILES = frozenset(
         ".factory/workflow/docs.py",
         ".factory/workflow/templates/adr.md",
         ".factory/workflow/templates/design.md",
+        ".factory/workflow/templates/pr-evidence.md",
         ".factory/workflow/templates/spec.md",
+        ".factory/workflow/templates/task.md",
         ".factory/adapters/.gitkeep",
     }
 )
