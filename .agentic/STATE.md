@@ -1,9 +1,9 @@
 +++
-phase = "design"
+phase = "test"
 track = "full"
-active_task = ""
+active_task = "E03-T1"
 blockers = []
-updated = 2026-11-19T02:29:49Z
+updated = 2026-11-19T02:35:27Z
 +++
 
-E02 is done. E03 (agent schema and tool scoping, #3) has an approved spec: docs/specs/E03-agent-schema.md. Next: the Architect's design note and ADRs, then slices as task files.
+E03 (#3): spec approved, design note and ADRs 0016-0018 accepted. Built in three slices, E03-T1 to E03-T3. Resume with `python .factory/state/state.py resume`.
