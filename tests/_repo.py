@@ -21,7 +21,7 @@ KIT_FILES = frozenset(
     {
         ".factory/.gitattributes",
         ".factory/.gitignore",
-        ".factory/agents/.gitkeep",
+        ".factory/agents/agents.py",
         ".factory/skills/.gitkeep",
         ".factory/standards/.gitkeep",
         ".factory/gates/gate.py",
@@ -45,6 +45,7 @@ STATE_FILES = frozenset(
         ".agentic/STATE.md",
         ".agentic/tasks/.gitkeep",
         ".agentic/handoffs/.gitkeep",
+        ".agentic/locks/.gitkeep",
         "docs/GLOSSARY.md",
         "docs/adr/README.md",
     }
