@@ -27,6 +27,8 @@ Must not:
 
 - The changelog, the version files and the merged PRs since the last tag.
 - skill: release
+- skill: resume-from-state, to start a session
+- skill: handoff, to end one
 
 ## Outputs
 

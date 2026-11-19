@@ -44,6 +44,8 @@ Must not:
 
 - The spec, the diff and the gate report.
 - skill: spec-review
+- skill: resume-from-state, to start a session
+- skill: handoff, to end one
 
 ## Outputs
 

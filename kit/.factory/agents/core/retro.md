@@ -27,6 +27,8 @@ Must not:
 - Finished jobs: handoffs, findings and gate reports.
 - `.agentic/` history and the Line Monitor's records.
 - skill: retro
+- skill: resume-from-state, to start a session
+- skill: handoff, to end one
 
 ## Outputs
 

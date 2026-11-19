@@ -28,6 +28,9 @@ Must not:
 - The approved spec and the design note, especially its test seams.
 - The slice's task file.
 - skill: tdd-slices
+- skill: lock-tests
+- skill: resume-from-state, to start a session
+- skill: handoff, to end one
 
 ## Outputs
 

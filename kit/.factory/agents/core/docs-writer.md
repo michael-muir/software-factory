@@ -27,6 +27,8 @@ Must not:
 
 - The spec, the diff and the gate report.
 - The existing docs and changelog.
+- skill: resume-from-state, to start a session
+- skill: handoff, to end one
 
 ## Outputs
 

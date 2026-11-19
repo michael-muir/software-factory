@@ -29,6 +29,8 @@ Must not:
 - The approved spec.
 - The codebase, earlier design notes and ADRs.
 - skill: design-note
+- skill: resume-from-state, to start a session
+- skill: handoff, to end one
 
 ## Outputs
 

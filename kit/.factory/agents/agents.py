@@ -319,11 +319,153 @@ def _check_locks(root: Path, checked: Checked) -> None:
         checked.problems += found
 
 
+# --- skills: the Agent Skills format, read as a YAML subset (E10, ADR 0022) ----------------------
+
+SKILLS_REL = ".factory/skills"
+SKILL_NAME = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*", re.ASCII)
+SKILL_FIELDS = ("name", "description", "license", "compatibility", "metadata", "allowed-tools")
+YAML_KEY = re.compile(r"([A-Za-z][A-Za-z0-9_-]*):(?: (.*))?")
+YAML_SPECIAL = "[]{}&*!|>%@`#"
+
+
+class _Unsupported(Exception):
+    """A line outside the YAML subset of ADR 0022."""
+
+
+def _yaml_scalar(raw: str) -> str:
+    value = raw.strip()
+    if not value or value[0] in YAML_SPECIAL or value.startswith("- "):
+        raise _Unsupported
+    if value[0] == "'":
+        if len(value) < 2 or not value.endswith("'"):
+            raise _Unsupported
+        return value[1:-1].replace("''", "'")
+    if value[0] == '"':
+        try:
+            decoded = json.loads(value)
+        except ValueError:
+            raise _Unsupported from None
+        if not isinstance(decoded, str):
+            raise _Unsupported
+        return decoded
+    return value
+
+
+def _read_yaml(text: str) -> tuple[dict[str, object], str, list[str]] | str:
+    """(fields, body, keys seen twice) from YAML front matter, or why it can't be read."""
+    lines = text.removeprefix("\ufeff").replace("\r\n", "\n").split("\n")
+    if lines[0].rstrip() != "---":
+        return "no YAML front matter: the first line must be ---"
+    end = next((i for i in range(1, len(lines)) if lines[i].rstrip() == "---"), None)
+    if end is None:
+        return "the front matter is never closed with ---"
+    data: dict[str, object] = {}
+    twice: list[str] = []
+    mapping: dict[str, str] | None = None
+    for number, line in enumerate(lines[1:end], start=1):
+        try:
+            if not line.strip() or line.lstrip().startswith("#"):
+                continue
+            if line[0] in " \t":
+                inner = YAML_KEY.fullmatch(line[2:]) if line.startswith("  ") else None
+                if mapping is None or "\t" in line or line[2] == " " or inner is None:
+                    raise _Unsupported
+                if inner.group(2) is None:
+                    raise _Unsupported
+                mapping[inner.group(1)] = _yaml_scalar(inner.group(2))
+                continue
+            match = YAML_KEY.fullmatch(line.rstrip())
+            if match is None:
+                raise _Unsupported
+            key, raw = match.group(1), match.group(2)
+            if key in data:
+                twice.append(key)
+            if raw is None or not raw.strip():
+                if key != "metadata":
+                    raise _Unsupported
+                mapping = {}
+                data[key] = mapping
+                continue
+            mapping = None
+            data[key] = _yaml_scalar(raw)
+        except _Unsupported:
+            return f"unsupported YAML on line {number}"
+    return data, "\n".join(lines[end + 1 :]), twice
+
+
+def read_yaml_front(text: str) -> tuple[dict[str, object], str] | str:
+    """A SKILL.md's front matter fields and body, or why they can't be read (ADR 0022)."""
+    result = _read_yaml(text)
+    if isinstance(result, str):
+        return result
+    data, body, twice = result
+    if twice:
+        return f"{twice[0]!r} appears twice"
+    return data, body
+
+
+def _bounded(value: object, low: int, high: int) -> str | None:
+    if not isinstance(value, str):
+        return "must be a string"
+    if not low <= len(value) <= high:
+        return f"must be {low} to {high} characters"
+    return None
+
+
+def _skill_name(value: object, folder: str) -> str | None:
+    why = _bounded(value, 1, 64)
+    if why is not None:
+        return why
+    if not isinstance(value, str) or not SKILL_NAME.fullmatch(value):
+        return "lowercase letters, digits and single hyphens, not at either end"
+    return None if value == folder else f"{value!r} does not match its folder {folder!r}"
+
+
+def _skill_field(key: str, value: object, folder: str) -> str | None:
+    """Why a standard field's value breaks the Agent Skills rules, or None (spec AC-02)."""
+    if key == "name":
+        return _skill_name(value, folder)
+    if key == "description":
+        return _bounded(value, 1, 1024)
+    if key == "compatibility":
+        return _bounded(value, 1, 500)
+    if key == "metadata":
+        ok = isinstance(value, dict) and all(isinstance(v, str) for v in value.values())
+        return None if ok else "must be a map of strings to strings"
+    if key in ("license", "allowed-tools"):
+        return None if isinstance(value, str) else "must be a string"
+    return None
+
+
+def _check_skills(root: Path, checked: Checked) -> None:
+    folder = root / SKILLS_REL
+    for path in sorted(folder.glob("*/SKILL.md")) if folder.is_dir() else []:
+        rel = path.relative_to(root).as_posix()
+        result = _read_yaml(path.read_text(encoding="utf-8"))
+        if isinstance(result, str):
+            checked.problems.append(state.Problem(rel, state.FRONT, result))
+            continue
+        data, _, twice = result
+        found = [state.Problem(rel, key, "appears twice") for key in dict.fromkeys(twice)]
+        for key in data:
+            if key not in SKILL_FIELDS:
+                found.append(state.Problem(rel, key, "not an Agent Skills field"))
+        for key in ("name", "description"):
+            if key not in data:
+                found.append(state.Problem(rel, key, "missing"))
+        for key, value in data.items():
+            why = _skill_field(key, value, path.parent.name)
+            if why is not None:
+                found.append(state.Problem(rel, key, why))
+        checked.problems += found
+
+
 def validate(root: Path) -> Checked:
-    """Problems in the agent files and lock records, sorted by path then key (spec AC-03)."""
+    """Problems in the agent files, lock records and skills, sorted by path then key."""
     checked = Checked()
     _check_roles(root, checked)
     _check_locks(root, checked)
+    _check_skills(root, checked)
     checked.problems.sort(key=lambda p: (p.path, p.where))
     return checked
 

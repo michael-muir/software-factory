@@ -28,6 +28,8 @@ Must not:
 - The gate report and the failing output.
 - The slice's tests, code and recent commits.
 - skill: debugging
+- skill: resume-from-state, to start a session
+- skill: handoff, to end one
 
 ## Outputs
 

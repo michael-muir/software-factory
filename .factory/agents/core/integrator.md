@@ -27,6 +27,8 @@ Must not:
 
 - The slice's branch, the gate report and the reviewers' findings.
 - skill: pull-request-evidence
+- skill: resume-from-state, to start a session
+- skill: handoff, to end one
 
 ## Outputs
 

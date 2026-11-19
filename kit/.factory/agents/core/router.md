@@ -30,6 +30,8 @@ Must not:
 - Requests from chat, issues, PR comments and CI events.
 - `.agentic/STATE.md`, task files and handoffs (`state.py resume`).
 - `.agentic/config.toml`: tracks, budgets and round limits.
+- skill: resume-from-state, to start a session
+- skill: handoff, to end one
 
 ## Outputs
 
