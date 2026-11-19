@@ -347,7 +347,11 @@ def test_the_gate_exits_2_on_an_invalid_role_and_runs_nothing(
 ) -> None:
     repo = gate_repo(
         tmp_path / "repo",
-        {"py.toml": profile("py", ["marker.txt"], {"format": touches("ran.txt"), "lint": PASS})},
+        {
+            "py.toml": profile(
+                "py", ["marker.txt"], {"format": touches("ran-format.txt"), "lint": PASS}
+            )
+        },
         files={"marker.txt": "x\n"},
     )
     write_roles(repo, {"implementer.md": role_text(tools='["deploy"]')})
@@ -357,7 +361,7 @@ def test_the_gate_exits_2_on_an_invalid_role_and_runs_nothing(
     code, output = run_gate(repo, monkeypatch, capsys)
     assert code == 2, output
     assert f"{AGENTS_REL}/implementer.md: tools: " in output
-    assert not (repo / "ran.txt").exists()
+    assert not (repo / "ran-format.txt").exists()
 
 
 @pytest.mark.ac("E03-AC-04")
@@ -366,7 +370,11 @@ def test_the_gate_passes_with_valid_roles(
 ) -> None:
     repo = gate_repo(
         tmp_path / "repo",
-        {"py.toml": profile("py", ["marker.txt"], {"format": touches("ran.txt"), "lint": PASS})},
+        {
+            "py.toml": profile(
+                "py", ["marker.txt"], {"format": touches("ran-format.txt"), "lint": PASS}
+            )
+        },
         files={"marker.txt": "x\n"},
     )
     write_roles(repo, {"implementer.md": role_text()})
@@ -375,7 +383,7 @@ def test_the_gate_passes_with_valid_roles(
         shutil.copyfile(KIT / rel, repo / ".factory" / rel)
     code, output = run_gate(repo, monkeypatch, capsys)
     assert code == 0, output
-    assert (repo / "ran.txt").exists()
+    assert (repo / "ran-format.txt").exists()
 
 
 @pytest.mark.ac("E03-AC-04")
