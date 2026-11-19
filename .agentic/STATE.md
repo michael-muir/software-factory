@@ -1,9 +1,9 @@
 +++
-phase = "test"
+phase = "ship"
 track = "full"
-active_task = "E03-T3"
+active_task = ""
 blockers = []
-updated = 2026-11-19T06:36:25Z
+updated = 2026-11-19T07:18:44Z
 +++
 
-E03 (#3): spec approved, design note and ADRs 0016-0018 accepted. Built in three slices, E03-T1 to E03-T3. Resume with `python .factory/state/state.py resume`.
+E03 (agent schema and tool scoping) is done: T1 #52, T2 #53 and T3 #54 are merged, and issue #3 is closed. No task is active. The next epic is the product owner's choice: E04 (#4), E09 (#9) and E11 (#11) have their dependencies met.
