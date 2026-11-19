@@ -4,7 +4,7 @@
   "files": {
     ".factory/.gitattributes": "a79691a93b46e49ce460c26ef22afcc03d6eca1e63bf2edbc20e96159510f6c9",
     ".factory/.gitignore": "a8115628a5707f002d62bcb965327fc7b13352c7a601dcccd2d41e90e1ccdc49",
-    ".factory/adapters/build.py": "3100b835d3688668648ff82b0ba0dea05c11ecd1afe14ea1e226a1154e1d40cb",
+    ".factory/adapters/build.py": "071bc85a0de2ff706ab87e902433019735547efdd54c4dd5ae265e564f50ca81",
     ".factory/agents/_schema.md": "7a7b199af2c38436c757ff9ac918b1ac3d3394093762517d3e57ee7ef9867794",
     ".factory/agents/_template.md": "78747451ba7bc74a761d472082927905dfe4e1e0ca57a6e0f60fb345f77358ff",
     ".factory/agents/agents.py": "09193f8401c8739e2f47c39a1d050d81dca07a4d2a941ce3146986701af02df3",

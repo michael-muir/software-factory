@@ -71,7 +71,8 @@ def _front(fields: Iterable[tuple[str, object]]) -> str:
 
 
 def _agent_file(card: Any, fields: list[tuple[str, object]]) -> bytes:
-    text = _front(fields) + NOTICE.format(source=card.source) + "\n" + str(card.body)
+    # The blank line after the front matter is Prettier's layout, so a repo's format check passes.
+    text = _front(fields) + "\n" + NOTICE.format(source=card.source) + "\n" + str(card.body)
     return text.encode("utf-8")
 
 
