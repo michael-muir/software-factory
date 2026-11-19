@@ -569,6 +569,124 @@ def _handoff(root: Path, args: argparse.Namespace) -> int:
     return 0
 
 
+# --- resume (E02 AC-12) -------------------------------------------------------------------------
+
+
+def _jsonable(value: object) -> object:
+    if isinstance(value, dt.datetime):
+        return _toml(value)
+    if isinstance(value, dict):
+        return {str(k): _jsonable(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_jsonable(item) for item in value]
+    return value
+
+
+def _handoff_order(rel: str, front: dict[str, object]) -> tuple[str, int, str]:
+    """Newest last: by created time, then the -N suffix of handoffs in the same second."""
+    stem = Path(rel).stem
+    rest = stem[len("YYYYMMDDTHHMMSSZ-") :]
+    task = str(front.get("task", ""))
+    number = 1
+    tail = rest[len(task) + 1 :] if rest.startswith(task + "-") else ""
+    if tail.isdigit():
+        number = int(tail)
+    return _toml(front.get("created")) if "created" in front else "", number, rel
+
+
+def _latest_handoff(root: Path, task_id: str) -> dict[str, object] | None:
+    candidates: list[tuple[tuple[str, int, str], dict[str, object]]] = []
+    for rel in _markdown(root, HANDOFFS_REL):
+        front, body = _read(root / rel)
+        if front.get("task") == task_id:
+            candidates.append(
+                (_handoff_order(rel, front), {"path": rel, "front": front, "body": body})
+            )
+    return max(candidates, key=lambda item: item[0])[1] if candidates else None
+
+
+def resume(root: Path) -> dict[str, object]:
+    """Everything a new session needs, read from the state files alone."""
+    _require_valid(root)
+    front, body = _state(root)
+    result: dict[str, object] = {
+        "state": {"path": STATE_REL, "front": front, "body": body},
+        "task": None,
+        "handoff": None,
+        "pending": [],
+    }
+    active = str(front.get("active_task", ""))
+    if active:
+        path = root / TASKS_REL / f"{active}.md"
+        task_front, task_body = _read(path)
+        result["task"] = {
+            "path": _rel(path, root),
+            "front": task_front,
+            "open_findings": [f for f in _findings_of(task_front) if f.get("status") == "open"],
+            "body": task_body,
+        }
+        result["handoff"] = _latest_handoff(root, active)
+    else:
+        pending = []
+        for rel in _markdown(root, TASKS_REL):
+            task_front, _ = _read(root / rel)
+            if task_front.get("status") != "done":
+                pending.append(
+                    {k: task_front.get(k) for k in ("id", "title", "status", "review_round")}
+                )
+        result["pending"] = pending
+    return result
+
+
+def _section(title: str) -> str:
+    return f"--- {title} " + "-" * max(3, 72 - len(title))
+
+
+def render(data: dict[str, object]) -> str:
+    state = data["state"]
+    assert isinstance(state, dict)
+    front = state["front"]
+    blockers = ", ".join(front["blockers"]) or "none"
+    lines = [
+        f"Phase: {front['phase']}   Track: {front['track']}   Updated: {_toml(front['updated'])}",
+        f"Blockers: {blockers}",
+    ]
+    task = data["task"]
+    if not isinstance(task, dict):
+        lines.append("No active task. Unfinished tasks:")
+        pending = data["pending"]
+        assert isinstance(pending, list)
+        lines += [f"  {t['id']}  [{t['status']}]  {t['title']}" for t in pending] or ["  (none)"]
+        return "\n".join(lines) + "\n"
+    tf = task["front"]
+    lines += [
+        f"Active task: {tf['id']}: {tf['title']} ({task['path']})",
+        f"Status: {tf['status']}   Review round: {tf['review_round']}",
+        "Open findings:",
+    ]
+    findings = task["open_findings"]
+    lines += [f"  {f['id']} [{f['severity']}] {f['summary']}" for f in findings] or ["  (none)"]
+    lines += [_section("task notes"), task["body"].strip("\n")]
+    handoff = data["handoff"]
+    if isinstance(handoff, dict):
+        hf = handoff["front"]
+        to = hf["to"] or "anyone"
+        title = f"latest handoff: {handoff['path']} (from {hf['from']} to {to})"
+        lines += [_section(title), handoff["body"].strip("\n")]
+    else:
+        lines.append("No handoff for this task yet.")
+    return "\n".join(lines) + "\n"
+
+
+def _resume(root: Path, args: argparse.Namespace) -> int:
+    data = resume(root)
+    print(
+        json.dumps(_jsonable(data), indent=2) if args.json else render(data),
+        end="\n" if args.json else "",
+    )
+    return 0
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="state.py", description="Software Factory state files.")
     parser.add_argument(
@@ -630,6 +748,10 @@ def _parser() -> argparse.ArgumentParser:
     handoff.add_argument("--to", default="", help="who should pick it up (default: anyone)")
     handoff.add_argument("--body-file", help="the note's body (default: read stdin)")
     handoff.set_defaults(run=_handoff)
+
+    resume_ = commands.add_parser("resume", help="print what a new session needs to carry on")
+    resume_.add_argument("--json", action="store_true", help="print it as JSON")
+    resume_.set_defaults(run=_resume)
     return parser
 
 
