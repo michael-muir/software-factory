@@ -1,3 +1,9 @@
-# STATE
++++
+phase = "spec"
+track = "full"
+active_task = ""
+blockers = []
+updated = 2026-11-18T00:00:00Z
++++
 
-_Placeholder. E02 defines this file: current phase, track, active task and blockers._
+Notes for the next session.

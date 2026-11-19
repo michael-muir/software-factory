@@ -45,6 +45,8 @@ STATE_FILES = frozenset(
         ".agentic/STATE.md",
         ".agentic/tasks/.gitkeep",
         ".agentic/handoffs/.gitkeep",
+        "docs/GLOSSARY.md",
+        "docs/adr/README.md",
     }
 )
 MANIFEST = ".factory/manifest.json"

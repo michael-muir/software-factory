@@ -9,6 +9,8 @@ from pathlib import Path
 KIT_ROOT = Path(__file__).resolve().parent.parent / "kit"
 KIT_DIR = ".factory"  # kit-managed files, tracked in the manifest
 STATE_DIR = ".agentic"  # state seeds, created only when missing
+# Folders of state seeds (ADR 0003): .agentic/, plus docs/ for the glossary and ADR README (E02).
+STATE_DIRS = (STATE_DIR, "docs")
 # Kit files written with mode 0o755 (E07 AC-04): the git hook shims.
 EXECUTABLE_FILES = frozenset({".factory/gates/hooks/pre-commit", ".factory/gates/hooks/pre-push"})
 
@@ -41,7 +43,7 @@ def _is_bytecode(rel: Path) -> bool:
 def load_kit(root: Path = KIT_ROOT) -> Kit:
     version = (root / "VERSION").read_text(encoding="utf-8").strip()
     files: dict[str, bytes] = {}
-    for top in (KIT_DIR, STATE_DIR):
+    for top in (KIT_DIR, *STATE_DIRS):
         for path in sorted((root / top).rglob("*")):
             if path.is_file() and not _is_bytecode(path.relative_to(root)):
                 files[path.relative_to(root).as_posix()] = to_lf(path.read_bytes())
