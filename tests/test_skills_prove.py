@@ -56,7 +56,7 @@ EXERCISED: dict[str, tuple[str, str]] = {
     "resume-from-state": ("live", "#64: 228e005; T3: 54cdb25"),
     "tdd-slices": ("live", "#64: a512e7f"),
     "lock-tests": ("live", "#64: a512e7f"),
-    "verify-with-evidence": ("live", "#64: full gate on 4b669d4"),
+    "verify-with-evidence": ("live", "#64: 4b669d4 (full gate)"),
     "handoff": ("live", "#63: dde7f2b; #64: 2acf979"),
     "spec-interview": ("fixture", ""),
     "design-note": ("fixture", ""),
