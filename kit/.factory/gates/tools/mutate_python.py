@@ -118,23 +118,26 @@ def content_seed(root: Path, files: Sequence[str]) -> bytes:
 
 
 def project_copy(root: Path, dest: Path) -> None:
-    """The files git sees (tracked, and untracked but not ignored), copied into a fresh repo.
+    """A shared clone of the repo at HEAD (history, index, file modes), with the files git sees
+    (tracked, and untracked but not ignored) copied over it as they are now.
 
     cosmic-ray swaps each mutant into the files it mutates, so it runs here: a killed or
     interrupted run can never leave a mutant in the working tree.
     """
-    listed = subprocess.run(
-        ["git", "ls-files", "-z", "--cached", "--others", "--exclude-standard"],
-        cwd=root,
-        capture_output=True,
-        check=True,
-    ).stdout
+
+    def git(*args: str, cwd: Path = root, check: bool = True) -> bytes:
+        return subprocess.run(["git", *args], cwd=cwd, capture_output=True, check=check).stdout
+
+    git("clone", "--quiet", "--shared", "--no-checkout", str(root), str(dest))
+    git(
+        "reset", "--quiet", cwd=dest, check=False
+    )  # the index at HEAD; a repo with no commits has none
+    listed = git("ls-files", "-z", "--cached", "--others", "--exclude-standard")
     for rel in filter(None, listed.decode("utf-8", errors="surrogateescape").split("\0")):
         source = root / rel
         if source.is_file():
             (dest / rel).parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(source, dest / rel)
-    subprocess.run(["git", "init", "-q"], cwd=dest, capture_output=True, check=True)
 
 
 def tests_pass(command: Sequence[str], cwd: Path) -> bool:

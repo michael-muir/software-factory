@@ -16,7 +16,7 @@
     ".factory/gates/profiles/.gitkeep": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
     ".factory/gates/profiles/python.toml": "d97a14e107d569adb926e7bfa8a6c71ca0203a54d512996bdd772cfbcd383684",
     ".factory/gates/profiles/ts-js.toml": "16419b1ffea47a6667628919157d715b2abeffe46281878e5d85146ed69e4b56",
-    ".factory/gates/tools/mutate_python.py": "af4fc334b34c08be94b5ed947e288af9913c97e5688c1922585f2d1ac233beda",
+    ".factory/gates/tools/mutate_python.py": "b4423e61e6cefc4bafd5a0a98f9859f289857c994d09d722c0fee6933190bae1",
     ".factory/gates/tools/mutate_ts.py": "660a1026e3c05139f0a935ca4ddc74bc16eb9ae02cd4f37f86ec9f73e25a1ef5",
     ".factory/skills/.gitkeep": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
     ".factory/standards/.gitkeep": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
