@@ -1,6 +1,6 @@
 task = "E12-T3"
-locked = 2026-11-20T02:38:38Z
+locked = 2026-11-20T07:19:40Z
 
 [[files]]
 path = "tests/test_adapters_check.py"
-sha256 = "39585cb1061e512aa49bf7f01c5b5a94c9297d2394b6c55a195e4da861dbb6ac"
+sha256 = "5e0f0b36039fc6e81aa8e4176b50bb74ab6a46a4030dba6c86ec5b1f31f2958f"

@@ -475,18 +475,17 @@ def test_done_when_an_in_list_call_is_allowed_by_all_three_hooks(
 
 
 def config_command(root: Path, tool: str) -> list[str]:
-    """The command each tool's generated hook config runs, as argv."""
+    """The command each tool's generated hook config runs, as argv: given to sh, as a tool does."""
     if tool == "claude-code":
         data = json.loads((root / ".claude" / "settings.json").read_text(encoding="utf-8"))
         command = data["hooks"]["PreToolUse"][0]["hooks"][0]["command"]
-        command = command.replace('"$CLAUDE_PROJECT_DIR/', "").rstrip('"')
     elif tool == "copilot":
         data = json.loads((root / ".github" / "hooks" / "factory.json").read_text("utf-8"))
         command = data["hooks"]["preToolUse"][0]["bash"]
     else:
         data = json.loads((root / ".cursor" / "hooks.json").read_text(encoding="utf-8"))
         command = data["hooks"]["preToolUse"][0]["command"]
-    return str(command).split()
+    return ["sh", "-c", str(command)]
 
 
 @POSIX_ONLY

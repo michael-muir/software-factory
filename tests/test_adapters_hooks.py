@@ -49,7 +49,10 @@ CLAUDE_ENTRY: dict[str, Any] = {
     "hooks": [
         {
             "type": "command",
-            "command": 'sh "$CLAUDE_PROJECT_DIR/.factory/agents/claude-hook"',
+            "command": (
+                "git -c 'alias.factory-hook=!sh .factory/agents/claude-hook' factory-hook;"
+                " exit $LASTEXITCODE"
+            ),
             "timeout": 10,
             "onFailure": "block",
         }
@@ -58,10 +61,20 @@ CLAUDE_ENTRY: dict[str, Any] = {
 COPILOT_ENTRY = {
     "type": "command",
     "bash": "sh .factory/agents/copilot-hook",
-    "powershell": "python .factory/agents/agents.py hook copilot",
+    "powershell": (
+        "git -c 'alias.factory-hook=!sh .factory/agents/copilot-hook' factory-hook;"
+        " exit $LASTEXITCODE"
+    ),
     "timeoutSec": 10,
 }
-CURSOR_ENTRY = {"command": "sh .factory/agents/cursor-hook", "timeout": 10, "failClosed": True}
+CURSOR_ENTRY = {
+    "command": (
+        "git -c 'alias.factory-hook=!sh .factory/agents/cursor-hook' factory-hook;"
+        " exit $LASTEXITCODE"
+    ),
+    "timeout": 10,
+    "failClosed": True,
+}
 
 
 def hook_repo(root: Path) -> Path:
