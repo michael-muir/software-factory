@@ -147,6 +147,12 @@ SECTIONS: dict[str, dict[str, Field]] = {
             "the coding tools build.py writes files for",
         ),
     },
+    "runner": {
+        "max_turns": Field("int", 50, _between(1, 10000), "commands per job; 1 to 10000"),
+        "job_timeout_minutes": Field("number", 120, _positive, "per job; > 0"),
+        "max_parallel": Field("int", 2, _between(1, 64), "jobs at once per daemon; 1 to 64"),
+        "worktree_root": Field("str", "", None, 'empty = "../<repo>.worktrees"'),
+    },
     "telemetry": {
         "enabled": Field("bool", False),
     },
