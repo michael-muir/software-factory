@@ -129,16 +129,17 @@ def run(
 def assert_denied(tool: str, result: subprocess.CompletedProcess[bytes]) -> None:
     out, err = result.stdout.decode(), result.stderr.decode()
     assert result.returncode == 2, (out, err)
+    seen = f"stdout {result.stdout!r}, stderr {result.stderr!r}"
     if tool.startswith("copilot"):
         answer = json.loads(out)
-        assert answer["permissionDecision"] == "deny"
-        assert answer["permissionDecisionReason"].startswith(DENY)
+        assert answer["permissionDecision"] == "deny", seen
+        assert answer["permissionDecisionReason"].startswith(DENY), seen
     elif tool == "cursor":
         answer = json.loads(out)
-        assert answer["permission"] == "deny"
-        assert answer["user_message"].startswith(DENY)
+        assert answer["permission"] == "deny", seen
+        assert answer["user_message"].startswith(DENY), seen
     else:
-        assert DENY in err, err
+        assert DENY in err, seen
 
 
 def assert_allowed(result: subprocess.CompletedProcess[bytes]) -> None:
