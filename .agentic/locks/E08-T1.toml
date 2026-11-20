@@ -1,0 +1,6 @@
+task = "E08-T1"
+locked = 2026-11-20T02:52:07Z
+
+[[files]]
+path = "tests/test_evidence_gate_report.py"
+sha256 = "3a756d23e18704a962f0fb3223e1cd0827bd3d5e1714416533b30dcd6d3cae68"

@@ -1,7 +1,7 @@
 """Software Factory gate engine: one deterministic pass/fail verdict for a repository.
 
 Usage (from anywhere inside the repo):
-    python .factory/gates/gate.py [--json]
+    python .factory/gates/gate.py [--json] [--json-out PATH] [--checks NAMES] [--base-ref REF]
 
 Exit codes: 0 every check passed, 1 at least one check failed, 2 a usage, config or profile
 error stopped the gate before any check ran. Standard library only (ADR 0007).
@@ -386,6 +386,22 @@ def tracked_files(root: Path) -> list[str]:
     return sorted(p for p in _git_paths(root, "ls-files", "-z") or [] if (root / p).is_file())
 
 
+def head_commit(root: Path) -> tuple[str | None, bool]:
+    """(the full SHA of HEAD or None with no commits, whether tracked files differ): E08 AC-01."""
+    head = subprocess.run(
+        ["git", "rev-parse", "--verify", "-q", "HEAD"], cwd=root, capture_output=True, text=True
+    )
+    if head.returncode != 0:
+        return None, False
+    status = subprocess.run(
+        ["git", "status", "--porcelain", "--untracked-files=no"],
+        cwd=root,
+        capture_output=True,
+        text=True,
+    )
+    return head.stdout.strip(), bool(status.stdout.strip())
+
+
 class FileSource:
     """Works out the files for {changed_files} once, only if a command asks for them."""
 
@@ -478,6 +494,8 @@ class Report:
     broken_locks: list[str] = dataclasses.field(default_factory=list)
     docs_checked: int = 0  # specs, design notes and ADRs linted (E04, ADR 0020)
     doc_problems: list[str] = dataclasses.field(default_factory=list)
+    commit: str | None = None  # HEAD when the run started (E08, ADR 0025)
+    dirty: bool = False  # tracked files differed from HEAD
 
     @property
     def verdict(self) -> str:
@@ -491,6 +509,8 @@ class Report:
             "verdict": self.verdict,
             "root": self.root,
             "base_ref": self.base_ref,
+            "commit": self.commit,
+            "dirty": self.dirty,
             "profiles": self.profiles,
             "changed_files": self.changed_files,
             "locks": {"locked": self.locked, "broken": self.broken_locks},
@@ -499,12 +519,36 @@ class Report:
         }
         return json.dumps(data, indent=2)
 
+    @classmethod
+    def from_json(cls, data: dict[str, Any]) -> Report:
+        """The report that `to_json` wrote, so one renderer serves every reader (ADR 0025)."""
+        locks, docs = data["locks"], data["docs"]
+        return cls(
+            root=data["root"],
+            base_ref=data["base_ref"],
+            profiles=list(data["profiles"]),
+            changed_files=list(data["changed_files"]),
+            results=[Result(**check) for check in data["checks"]],
+            locked=locks["locked"],
+            broken_locks=list(locks["broken"]),
+            docs_checked=docs["checked"],
+            doc_problems=list(docs["problems"]),
+            commit=data.get("commit"),
+            dirty=bool(data.get("dirty", False)),
+        )
+
+    def _commit_line(self) -> str:
+        if self.commit is None:
+            return "Commit: none"
+        return f"Commit: {self.commit}{' (uncommitted changes)' if self.dirty else ''}"
+
     def to_text(self) -> str:
         files = "file" if self.locked == 1 else "files"
         state = f"{len(self.broken_locks)} broken" if self.broken_locks else "none changed"
         lines = [
             f"Gate: {self.root}",
             f"Base: {self.base_ref}",
+            self._commit_line(),
             f"Locks: {self.locked} locked {files}, {state}",
         ]
         lines += [f"  {line}" for line in self.broken_locks]
@@ -605,9 +649,22 @@ def parse_checks(text: str) -> list[str]:
     return names
 
 
+def _json_out(text: str | None) -> Path | None:
+    """The --json-out path, checked before anything runs (E08 AC-02)."""
+    if text is None:
+        return None
+    path = Path(text).resolve()
+    if not text.strip() or path.is_dir() or not path.parent.is_dir():
+        raise GateError(f"--json-out: cannot write {text}: it must be a file in an existing folder")
+    return path
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="gate.py", description="Run the repository gate.")
     parser.add_argument("--json", action="store_true", help="print the report as JSON")
+    parser.add_argument(
+        "--json-out", metavar="PATH", help="also save the JSON report to PATH (E08)"
+    )
     parser.add_argument(
         "--checks", metavar="NAME[,NAME...]", help="run only these checks; skip the rest"
     )
@@ -616,6 +673,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
     try:
+        json_out = _json_out(args.json_out)
         only = parse_checks(args.checks) if args.checks is not None else None
         root = find_root(Path.cwd())
         settings = Settings.load(root)
@@ -631,6 +689,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 f"{listed}"
             )
         docs_checked, doc_issues = doc_problems(root)
+        commit, dirty = head_commit(root)
         if args.base_ref is not None:
             if not args.base_ref.strip():
                 raise GateError("--base-ref must not be empty")
@@ -652,8 +711,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         broken,
         docs_checked,
         doc_issues,
+        commit,
+        dirty,
     )
     print(report.to_json() if args.json else report.to_text())
+    if json_out is not None:
+        json_out.write_text(report.to_json() + "\n", encoding="utf-8", newline="\n")
     return 0 if report.verdict == "pass" else 1
 
 
