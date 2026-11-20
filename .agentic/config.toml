@@ -27,5 +27,11 @@ python_command = ["uv", "run", "python"]  # runs the gate in this repo's uv envi
 [models]
 cross_model_vendor = "openai"
 
+[runner]
+max_turns = 50  # commands per job; 1 to 10000
+job_timeout_minutes = 120  # per job; > 0
+max_parallel = 2  # jobs at once per daemon; 1 to 64
+worktree_root = ""  # empty = "../<repo>.worktrees"
+
 [telemetry]
 enabled = false

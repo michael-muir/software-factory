@@ -79,6 +79,7 @@ KIT_FILES = frozenset(
         ".factory/workflow/templates/spec.md",
         ".factory/workflow/templates/task.md",
         ".factory/adapters/build.py",
+        ".factory/runner/run.py",
     }
 )
 STATE_FILES = frozenset(
