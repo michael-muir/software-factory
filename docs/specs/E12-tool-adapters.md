@@ -52,11 +52,13 @@ The factory's roles and skills are written once, in the neutral formats of E03 a
 | `search` | Glob, Grep | `search` | `glob`, `grep` | `Grep` |
 | `edit` | Edit, MultiEdit, NotebookEdit | `edit` | `edit` | `Write` (Cursor matches edits as writes) |
 | `write` | Write | `edit` | `create` | `Write` |
-| `run` | Bash | `execute` | `bash`, `powershell` | `Shell` |
+| `run` | Bash (hook: Bash, PowerShell) | `execute` | `bash`, `powershell` | `Shell` |
 | `web` | WebFetch, WebSearch | `web` | `web_fetch` | none documented |
 
+Claude Code's hook sees the same names as its agent `tools`, plus `PowerShell`, its Windows shell tool. So the generated `PreToolUse` matcher covers `Bash|PowerShell`. Agent files still list `Bash` only (change of 20 Nov 2026, below).
+
 **Who is the role**, per tool (E03's ADR 0017 order):
-- **Claude Code:** `agent_type`, then `FACTORY_ROLE`.
+- **Claude Code:** `agent_type`, then `FACTORY_ROLE`. A subagent's calls carry `agent_id` and `agent_type`, its name, which comes before the session's own `--agent`.
 - **Copilot:** `agentType` (or `agent_type`), then `FACTORY_ROLE`.
 - **Cursor:** `FACTORY_ROLE` only, because Cursor's `preToolUse` payload names no agent.
 
@@ -105,3 +107,7 @@ The factory's roles and skills are written once, in the neutral formats of E03 a
 4. **A hook timeout lets the call through** in Copilot (as its docs say) and in Claude Code. The gate, which checks locks, is the backstop.
 5. **The exact payload fields for a file's path,** in Copilot's `toolArgs` and Cursor's `tool_input`, are confirmed by the Architect against each tool's documentation before tests are written. The design note records them.
 6. **Generated files aren't kit files.** They belong to the repo, are rebuilt from its own roles and skills, and are never kept on upgrade. A hand edit is overwritten by the next build, which is why they carry a notice.
+
+## Changes
+
+- **20 Nov 2026, approved by the product owner after the AC-11 live check failed on Windows:** Claude Code's `PowerShell` tool maps to `run`, and the generated `PreToolUse` matcher includes it. Claude Code's hooks docs (code.claude.com/docs/en/hooks) use the matcher `Bash|PowerShell`, and give the tool the same input fields as Bash, with the command in `tool_input.command`. Before this change, a PowerShell call skipped the hook, so a role could run any command. E03's shell control check also covers PowerShell syntax now. This was task E12-T4, and it ships in the same PR as E12-T3.

@@ -68,7 +68,7 @@ run = ["uv run pytest", "python .factory/gates/gate.py"]   # command prefixes; d
 | `search` | find files or text | Glob, Grep |
 | `edit` | change an existing file | Edit, MultiEdit, NotebookEdit |
 | `write` | create or replace a file | Write |
-| `run` | run a shell command | Bash |
+| `run` | run a shell command | Bash, PowerShell (hook only) |
 | `web` | fetch or search the web | WebFetch, WebSearch |
 
 **`.agentic/locks/<task>.toml`**, written by `agents.py lock`:
@@ -134,3 +134,7 @@ sha256 = "…"                      # of the LF-normalised content (ADR 0004)
 3. **Locks list files, not folders.** Adding a test to a locked task means relocking with `--replace`, which is a human's decision.
 4. **One writer at a time,** as in E02.
 5. **Delegation tools are unmapped,** so they're denied while a role is set, until E13 and E19 add a `delegate` tool.
+
+## Changes
+
+- **20 Nov 2026, approved by the product owner (E12 PR #68):** the Claude Code hook maps the `PowerShell` tool, Claude Code's shell on Windows, to `run`, as it maps `Bash`. Agent files still list `Bash` only. A `run` scope's shell control check also treats PowerShell syntax as control: `$`, `(`, `)`, `@` at the start of a word, and line or paragraph separators, beside `;`, `&`, `|`, `` ` ``, `>`, `<` and newlines.

@@ -77,6 +77,14 @@ git -c 'alias.factory-hook=!sh .factory/agents/<launcher>' factory-hook; exit $L
 
 `tests/test_adapters_shells.py` runs every registered command through sh, bash, `powershell` and `pwsh` wherever they're installed, on CI's three OSes. It also runs them through Cursor's PowerShell wrapper, with a PATH that has git but no sh, and with a byte order mark.
 
+**Claude Code's PowerShell tool (amended 20 Nov 2026, after the live check failed on Windows).** On Windows, Claude Code has a `PowerShell` tool, which it treats as the primary shell once it's on. Its hooks docs use the matcher `Bash|PowerShell`, and give the tool Bash's input fields, with the command in `tool_input.command`. The factory's matcher listed only Bash, so a PowerShell call skipped the hook. In the product owner's live check, `ls` ran under the verifier role.
+
+- `CLAUDE_CODE_TOOLS` maps `PowerShell` to `run`, and the generated matcher includes it. Agent files still list only `Bash`: a subagent with that list doesn't get the PowerShell tool.
+- The shell control check covers PowerShell syntax as well as sh's. PowerShell evaluates `(...)`, `$var`, `$x.Method()` and `@(...)` inside a native command's arguments, so `$`, `(`, `)` and `@` at the start of a word are control text. So is a line break of any kind. Copilot's `powershell` tool and Cursor's `Shell` on Windows go through the same check.
+- A subagent's calls carry `agent_id` and `agent_type`, and the hook already reads `agent_type`. A call the main session makes has no `agent_type`, so only `FACTORY_ROLE` and locks apply to it.
+
+`tests/test_adapters_powershell.py` covers these, with the docs' payload shape.
+
 **Writing:** JSON is written with `indent=2`, LF line endings and a final newline. Front matter keys are always in the same order. Files are written atomically (`state.write`).
 
 ## Build, check and manifest (ADR 0023)
