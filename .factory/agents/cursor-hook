@@ -1,0 +1,14 @@
+#!/bin/sh
+# Software Factory Cursor preToolUse hook (E12, ADR 0024).
+# Finds a Python 3.11+ (python3 can be the Windows Store stub) and runs agents.py hook cursor.
+# Exit 0 allows the tool call and exit 2 blocks it; anything else would let it through, so a
+# missing Python blocks too.
+here=$(dirname "$0")
+for py in python3 python py; do
+  if command -v "$py" >/dev/null 2>&1 &&
+     "$py" -c 'import sys; sys.exit(sys.version_info < (3, 11))' >/dev/null 2>&1; then
+    exec "$py" "$here/agents.py" hook cursor
+  fi
+done
+echo "factory hook: blocked: no Python 3.11+ found on PATH (tried python3, python, py)" >&2
+exit 2
