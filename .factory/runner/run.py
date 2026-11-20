@@ -11,8 +11,11 @@ and each change to it is one atomic file operation (ADR 0030):
     jobs/<id>/commands/0001.toml commands added with `send`
     jobs/<id>/logs/0001.log      output of command 1
     jobs/<id>/closed             no more commands will come
+    claims/<sha256 of path>      a worktree claim, holding the job id
+    rejected/<name>              a hand-dropped file whose name isn't a job id, and its record
 
 Usage:
+    run.py --daemon
     run.py submit [--id ID] [--base REF] [--task TASK] [--open] [-- argv ...]
     run.py send <job> -- argv ...
     run.py close <job>
@@ -25,23 +28,28 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import hashlib
 import json
 import os
 import re
 import secrets
+import shutil
+import socket
 import subprocess
 import sys
+import time
 import tomllib
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
 JOB_ID = re.compile(r"[a-z0-9][a-z0-9-]{0,39}", re.ASCII)
 TASK_ID = re.compile(r"[A-Za-z0-9._-]+", re.ASCII)  # mirrors state.TASK_ID (E02)
 FINISHED = ("succeeded", "failed", "halted")
 REQUEST_VERSION = 1
 CONFIG_REL = Path(".agentic") / "config.toml"
+POLL_SECONDS = 0.2  # one daemon pass; the spec allows 2 seconds for a pickup (ADR 0032)
 
 
 class BadInput(Exception):
@@ -375,6 +383,360 @@ def _refuse_if_finished(repo: Repo, job_id: str) -> None:
         raise Refused(f"job {job_id} has finished ({record['status']})")
 
 
+# --- the daemon (ADR 0032) --------------------------------------------------------------------
+
+
+class Proc(Protocol):
+    """A running command: subprocess.Popen, or a test's stand-in."""
+
+    def poll(self) -> int | None: ...
+
+    def kill(self) -> None: ...
+
+
+Starter = Callable[[list[str], Path, Mapping[str, str], Path], Proc]
+
+
+class _NotStarted:
+    """A command that could not start: it has already exited with 127."""
+
+    def poll(self) -> int | None:
+        return 127
+
+    def kill(self) -> None:
+        return None
+
+
+def start_command(argv: list[str], cwd: Path, env: Mapping[str, str], log: Path) -> Proc:
+    """Start argv without a shell in cwd, its stdout and stderr going to log."""
+    program = shutil.which(argv[0], path=env.get("PATH")) or argv[0]
+    group: dict[str, Any] = {"start_new_session": True}
+    if sys.platform == "win32":
+        group = {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
+    log.parent.mkdir(parents=True, exist_ok=True)
+    with open(log, "wb") as out:
+        try:
+            return subprocess.Popen(
+                [program, *argv[1:]],
+                cwd=cwd,
+                env=dict(env),
+                stdin=subprocess.DEVNULL,
+                stdout=out,
+                stderr=subprocess.STDOUT,
+                **group,
+            )
+        except OSError as exc:
+            out.write(f"run.py: cannot start {argv[0]}: {exc}\n".encode())
+            return _NotStarted()
+
+
+def claim_key(path: Path) -> str:
+    """ADR 0030: the SHA-256 of the case-folded, resolved absolute path."""
+    return hashlib.sha256(os.path.realpath(path).casefold().encode("utf-8")).hexdigest()
+
+
+def request_problems(data: dict[str, Any], stem: str) -> list[str]:
+    """What is wrong with a request read from queue/<stem>.toml (empty when it's sound)."""
+    found: list[str] = []
+    job_id = data.get("id")
+    if not isinstance(job_id, str) or not JOB_ID.fullmatch(job_id):
+        found.append(f"id must match {JOB_ID.pattern}")
+    elif job_id != stem:
+        found.append(f"id {job_id!r} doesn't match the file name {stem!r}")
+    base = data.get("base")
+    if not isinstance(base, str) or not base.strip():
+        found.append("base must be a git ref")
+    task = data.get("task")
+    if not isinstance(task, str) or not TASK_ID.fullmatch(task):
+        found.append("task must be a task id")
+    is_open = data.get("open")
+    if not isinstance(is_open, bool):
+        found.append("open must be true or false")
+    commands = data.get("commands")
+    sound = isinstance(commands, list) and all(
+        isinstance(c, list) and c and all(isinstance(w, str) for w in c) for c in commands
+    )
+    if not sound:
+        found.append("commands must be a list of non-empty argv lists")
+    elif is_open is False and len(commands) != 1:  # type: ignore[arg-type]
+        found.append("a job without open needs exactly one command")
+    if not isinstance(data.get("submitted"), dt.datetime):
+        found.append("submitted must be a date and time")
+    if data.get("version") != REQUEST_VERSION:
+        found.append(f"version must be {REQUEST_VERSION}")
+    return found
+
+
+def _write_atomic(path: Path, text: str) -> None:
+    """Replace path whole. On Windows a reader holding the file open makes replace fail: retry."""
+    tmp = _temp(path.parent, text)
+    for attempt in range(20):
+        try:
+            os.replace(tmp, path)
+            return
+        except PermissionError:
+            if attempt == 19:
+                tmp.unlink(missing_ok=True)
+                raise
+            time.sleep(0.05)
+
+
+def _last_line(text: str) -> str:
+    lines = [line.strip() for line in text.strip().splitlines() if line.strip()]
+    return lines[-1] if lines else "no output"
+
+
+def _aware(value: object) -> dt.datetime | None:
+    if not isinstance(value, dt.datetime):
+        return None
+    return value if value.tzinfo is not None else value.replace(tzinfo=dt.UTC)
+
+
+@dataclass
+class _Job:
+    id: str
+    request: dict[str, Any]
+    record: dict[str, Any]
+    worktree: Path
+    claim: Path
+    proc: Proc | None = None
+
+
+class Daemon:
+    """One polling loop: claims requests, makes worktrees, runs commands, ends jobs."""
+
+    def __init__(
+        self, repo: Repo, config: Config, *, start: Starter = start_command, name: str = ""
+    ) -> None:
+        self.repo = repo
+        self.config = config
+        self.start = start
+        self.name = name or f"{socket.gethostname()}:{os.getpid()}:{secrets.token_hex(3)}"
+        self.running: dict[str, _Job] = {}
+
+    # -- the loop
+
+    def run(self) -> int:
+        try:
+            while True:
+                self.tick(_now())
+                time.sleep(POLL_SECONDS)
+        except KeyboardInterrupt:
+            return 0
+
+    def tick(self, now: dt.datetime) -> None:
+        self._claim_new(now)
+        for job in list(self.running.values()):
+            try:
+                self._advance(job, now)
+            except Exception as exc:  # one broken job must not stop the others
+                self.running.pop(job.id, None)
+                job.record.update(status="failed", reason=f"runner error: {exc}", finished=now)
+                self._save(job.id, job.record)
+
+    # -- claiming
+
+    def _queued(self) -> list[tuple[dt.datetime, str, Path, dict[str, Any] | None]]:
+        queue = self.repo.queue
+        if not queue.is_dir():
+            return []
+        found = []
+        for path in queue.iterdir():
+            if path.suffix != ".toml" or path.name.startswith("."):
+                continue
+            try:
+                data: dict[str, Any] | None = _read_toml(path)
+            except (BadInput, OSError):
+                data = None
+            try:
+                mtime = dt.datetime.fromtimestamp(path.stat().st_mtime, dt.UTC)
+            except OSError:
+                continue  # claimed meanwhile
+            when = _aware(data.get("submitted")) if data is not None else None
+            found.append((when or mtime, path.name, path, data))
+        return sorted(found, key=lambda item: (item[0], item[1]))
+
+    def _claim_new(self, now: dt.datetime) -> None:
+        for _, _, path, data in self._queued():
+            stem = path.stem
+            if not JOB_ID.fullmatch(stem):
+                self._reject(path, now, f"the file name {path.name!r} isn't a job id")
+                continue
+            problems = ["the request is not valid TOML"] if data is None else []
+            problems = problems or request_problems(data or {}, stem)
+            if not problems and len(self.running) >= self.config.max_parallel:
+                continue
+            target = self.repo.job(stem) / "request.toml"
+            if target.exists():
+                self._reject(path, now, f"job {stem} already has a request")
+                continue
+            target.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                os.rename(path, target)  # the claim: only one daemon's rename succeeds
+            except FileNotFoundError:
+                continue
+            if problems:
+                self._save(stem, self._failed(stem, data or {}, now, "; ".join(problems)))
+            else:
+                self._begin(stem, _read_toml(target), now)
+
+    def _reject(self, path: Path, now: dt.datetime, reason: str) -> None:
+        folder = self.repo.store / "rejected"
+        folder.mkdir(parents=True, exist_ok=True)
+        target, number = folder / path.name, 1
+        while target.exists() or Path(f"{target}.job.toml").exists():
+            number += 1
+            target = folder / f"{path.name}.{number}"
+        try:
+            os.rename(path, target)
+        except FileNotFoundError:
+            return
+        record = self._failed(path.stem, {}, now, reason)
+        _write_atomic(Path(f"{target}.job.toml"), dumps(record))
+
+    def _failed(
+        self, job_id: str, request: dict[str, Any], now: dt.datetime, reason: str
+    ) -> dict[str, Any]:
+        return {
+            "id": job_id,
+            "status": "failed",
+            "reason": reason,
+            "created": _aware(request.get("submitted")) or now,
+            "finished": now,
+            "turns": 0,
+            "usd": 0.0,
+            "warnings": [],
+            "daemon": self.name,
+            "commands": [],
+        }
+
+    # -- starting a job: its claim and worktree (ADR 0030)
+
+    def _begin(self, job_id: str, request: dict[str, Any], now: dt.datetime) -> None:
+        worktree = worktree_path(self.repo, self.config, job_id)
+        branch = f"factory/{job_id}"
+        record: dict[str, Any] = {
+            "id": job_id,
+            "status": "running",
+            "reason": "",
+            "base": request["base"],
+            "branch": branch,
+            "worktree": str(worktree),
+            "task": request["task"],
+            "open": request["open"],
+            "created": _aware(request["submitted"]),
+            "started": now,
+            "turns": 0,
+            "usd": 0.0,
+            "warnings": [],
+            "daemon": self.name,
+            "commands": [],
+        }
+
+        def fail(reason: str) -> None:
+            record.update(status="failed", reason=reason, finished=now)
+            self._save(job_id, record)
+
+        claims = self.repo.store / "claims"
+        claims.mkdir(parents=True, exist_ok=True)
+        claim = claims / claim_key(worktree)
+        try:
+            with open(claim, "x", encoding="utf-8") as f:
+                f.write(job_id + "\n")
+        except FileExistsError:
+            other = claim.read_text(encoding="utf-8").strip() or "another job"
+            fail(f"worktree {worktree} is already claimed by {other}")
+            return
+        if worktree.exists() or worktree.is_symlink():
+            claim.unlink(missing_ok=True)
+            fail(f"worktree path {worktree} already exists")
+            return
+        had_branch = self._has_branch(branch)
+        added = _git(
+            self.repo.main, "worktree", "add", "-q", "-b", branch, str(worktree), request["base"]
+        )
+        if added.returncode != 0:
+            self._undo_worktree(worktree, branch, had_branch)
+            claim.unlink(missing_ok=True)
+            fail(
+                f"git worktree add from base {request['base']!r} failed: {_last_line(added.stderr)}"
+            )
+            return
+        job = _Job(job_id, request, record, worktree, claim)
+        self.running[job_id] = job
+        self._save(job_id, record)
+
+    def _has_branch(self, branch: str) -> bool:
+        found = _git(self.repo.main, "rev-parse", "--verify", "-q", f"refs/heads/{branch}")
+        return found.returncode == 0
+
+    def _undo_worktree(self, worktree: Path, branch: str, had_branch: bool) -> None:
+        if worktree.exists():
+            _git(self.repo.main, "worktree", "remove", "--force", str(worktree))
+            shutil.rmtree(worktree, ignore_errors=True)
+        _git(self.repo.main, "worktree", "prune")
+        if not had_branch and self._has_branch(branch):
+            _git(self.repo.main, "branch", "-D", branch)
+
+    # -- running a job's commands
+
+    def _advance(self, job: _Job, now: dt.datetime) -> None:
+        commands: list[dict[str, Any]] = job.record["commands"]
+        if job.proc is not None:
+            code = job.proc.poll()
+            if code is None:
+                return
+            job.proc = None
+            ran = commands[-1]
+            ran["exit_code"] = code
+            ran["duration_s"] = round(max((now - ran["started"]).total_seconds(), 0.0), 3)
+            job.record["turns"] += 1
+            self._save(job.id, job.record)
+            if not job.request["open"] and code != 0:
+                self._end(job, now, "failed", f"command {len(commands)} exited {code}")
+                return
+        closed = is_closed(self.repo, job.id, job.request)  # before listing: see _send's race
+        argvs = [list(c) for c in job.request["commands"]] + sent_commands(self.repo, job.id)
+        if len(commands) < len(argvs):
+            self._run_next(job, argvs[len(commands)], now)
+        elif closed:
+            last = commands[-1]["exit_code"] if commands else 0
+            if last == 0:
+                self._end(job, now, "succeeded", "")
+            else:
+                self._end(job, now, "failed", f"the last command exited {last}")
+
+    def _run_next(self, job: _Job, argv: list[str], now: dt.datetime) -> None:
+        commands: list[dict[str, Any]] = job.record["commands"]
+        log = self.repo.job(job.id) / "logs" / f"{len(commands) + 1:04d}.log"
+        log.parent.mkdir(parents=True, exist_ok=True)
+        commands.append(
+            {"argv": argv, "exit_code": None, "started": now, "duration_s": None, "log": str(log)}
+        )
+        env = dict(os.environ)
+        env["FACTORY_JOB"] = job.id
+        job.proc = self.start(argv, job.worktree, env, log)
+        self._save(job.id, job.record)
+
+    def _end(self, job: _Job, now: dt.datetime, status: str, reason: str) -> None:
+        self.running.pop(job.id, None)
+        job.record.update(status=status, reason=reason, finished=now)
+        if status == "succeeded":
+            removed = _git(self.repo.main, "worktree", "remove", str(job.worktree))
+            if removed.returncode == 0:
+                job.claim.unlink(missing_ok=True)
+            else:
+                job.record["warnings"].append(
+                    f"worktree kept: git refused to remove it: {_last_line(removed.stderr)}"
+                )
+        self._save(job.id, job.record)
+
+    def _save(self, job_id: str, record: dict[str, Any]) -> None:
+        folder = self.repo.job(job_id)
+        folder.mkdir(parents=True, exist_ok=True)
+        _write_atomic(folder / "job.toml", dumps(record))
+
+
 # --- commands ---------------------------------------------------------------------------------
 
 
@@ -487,11 +849,19 @@ def _status(args: argparse.Namespace, argv: list[str] | None) -> int:
     return 0
 
 
+def _daemon(args: argparse.Namespace, argv: list[str] | None) -> int:
+    if argv is not None:
+        raise BadInput("--daemon takes no command")
+    repo = find_repo(Path.cwd())
+    return Daemon(repo, load_config(repo.main)).run()
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="run.py", description="Software Factory runner: jobs in their own git worktrees."
     )
-    commands = parser.add_subparsers(dest="command", required=True)
+    parser.add_argument("--daemon", action="store_true", help="run jobs from the queue")
+    commands = parser.add_subparsers(dest="command")
 
     submit = commands.add_parser("submit", help="queue a job; its command follows --")
     submit.add_argument("--id", help="the job id (default: generated)")
@@ -521,10 +891,17 @@ def main(argv: Sequence[str] | None = None) -> int:
     if "--" in words:  # everything after the first -- is the job's command, untouched
         cut = words.index("--")
         words, command = words[:cut], words[cut + 1 :]
+    parser = _parser()
     try:
-        args = _parser().parse_args(words)
+        args = parser.parse_args(words)
     except SystemExit as exc:
         return exc.code if isinstance(exc.code, int) else 2
+    if args.daemon == (args.command is not None):
+        parser.print_usage(sys.stderr)
+        print("run.py: give either --daemon or one command", file=sys.stderr)
+        return 2
+    if args.daemon:
+        args.run = _daemon
     run: Callable[[argparse.Namespace, list[str] | None], int] = args.run
     try:
         return run(args, command)
