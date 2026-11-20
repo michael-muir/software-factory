@@ -496,11 +496,16 @@ class Report:
     doc_problems: list[str] = dataclasses.field(default_factory=list)
     commit: str | None = None  # HEAD when the run started (E08, ADR 0025)
     dirty: bool = False  # tracked files differed from HEAD
+    adapter_files: int | None = None  # tool files build.py produces; None without it (E12)
+    adapter_problems: list[str] = dataclasses.field(default_factory=list)
 
     @property
     def verdict(self) -> str:
         failed = (
-            self.broken_locks or self.doc_problems or any(r.status == "fail" for r in self.results)
+            self.broken_locks
+            or self.doc_problems
+            or self.adapter_problems
+            or any(r.status == "fail" for r in self.results)
         )
         return "fail" if failed else "pass"
 
@@ -515,6 +520,7 @@ class Report:
             "changed_files": self.changed_files,
             "locks": {"locked": self.locked, "broken": self.broken_locks},
             "docs": {"checked": self.docs_checked, "problems": self.doc_problems},
+            "adapters": {"files": self.adapter_files, "problems": self.adapter_problems},
             "checks": [dataclasses.asdict(r) for r in self.results],
         }
         return json.dumps(data, indent=2)
@@ -523,6 +529,7 @@ class Report:
     def from_json(cls, data: dict[str, Any]) -> Report:
         """The report that `to_json` wrote, so one renderer serves every reader (ADR 0025)."""
         locks, docs = data["locks"], data["docs"]
+        adapters = data.get("adapters") or {}
         return cls(
             root=data["root"],
             base_ref=data["base_ref"],
@@ -535,6 +542,8 @@ class Report:
             doc_problems=list(docs["problems"]),
             commit=data.get("commit"),
             dirty=bool(data.get("dirty", False)),
+            adapter_files=adapters.get("files"),  # null: not checked, no build.py (E12)
+            adapter_problems=list(adapters.get("problems", [])),
         )
 
     def _commit_line(self) -> str:
@@ -558,6 +567,13 @@ class Report:
         found = f"{count} problem{'' if count == 1 else 's'}" if count else "no problems"
         lines.append(f"Docs: {self.docs_checked} checked, {found}")
         lines += [f"  {problem}" for problem in self.doc_problems]
+        if self.adapter_files is None:
+            lines.append("Adapters: not checked, no build.py")
+        else:
+            lines.append(
+                f"Adapters: {self.adapter_files} files, {len(self.adapter_problems)} stale"
+            )
+            lines += [f"  {problem}" for problem in self.adapter_problems]
         width = max((len(name) for name in self.profiles), default=0)
         for r in self.results:
             took = f"{r.duration_s:.2f}s" if r.duration_s is not None else "-"
@@ -639,6 +655,22 @@ def doc_problems(root: Path) -> tuple[int, list[str]]:
     return checked.count, [str(p) for p in checked]
 
 
+BUILD_MODULE = Path(".factory") / "adapters" / "build.py"
+
+
+def adapter_drift(root: Path) -> tuple[int | None, list[str]]:
+    """(tool files produced, drift lines): E12 AC-08, ADR 0023. A kit without build.py: None."""
+    module = _load_module(root / BUILD_MODULE, "factory_build")
+    if module is None:
+        return None, []
+    try:
+        files, drift = module.check(root)
+    except module.BuildError as exc:
+        shown = BUILD_MODULE.as_posix()
+        raise GateError(f"tool files can't be built (python {shown} --check): {exc}") from None
+    return files, [str(line) for line in drift]
+
+
 def parse_checks(text: str) -> list[str]:
     """`--checks a,b` -> ["a", "b"]; unknown names are a usage error (E07 AC-01)."""
     names = [name.strip() for name in text.split(",") if name.strip()]
@@ -690,6 +722,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
         docs_checked, doc_issues = doc_problems(root)
         commit, dirty = head_commit(root)
+        adapter_files, adapter_issues = adapter_drift(root)
         if args.base_ref is not None:
             if not args.base_ref.strip():
                 raise GateError("--base-ref must not be empty")
@@ -713,6 +746,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         doc_issues,
         commit,
         dirty,
+        adapter_files,
+        adapter_issues,
     )
     print(report.to_json() if args.json else report.to_text())
     if json_out is not None:

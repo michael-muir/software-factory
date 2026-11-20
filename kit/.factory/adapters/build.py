@@ -1,6 +1,6 @@
 """Software Factory tool adapters (E12, ADR 0023). Standard library only.
 
-    python .factory/adapters/build.py [--root PATH]
+    python .factory/adapters/build.py [--check] [--root PATH]
 
 Compiles the neutral roles (`.factory/agents/**`) and skills (`.factory/skills/*/`) into the
 files Claude Code, GitHub Copilot and Cursor read, and registers each tool's hook (ADR 0024),
@@ -8,7 +8,9 @@ for the tools in `.agentic/config.toml` `[adapters] tools` (default: all three).
 committed. `.factory/adapters/generated.json` lists what was written, so a later build removes
 exactly the files it no longer produces and never a repo's own files beside them. The factory's
 hook entry is merged into a repo's own `.claude/settings.json` and `.cursor/hooks.json`, and only
-that entry is taken out when a tool is dropped.
+that entry is taken out when a tool is dropped. `--check` builds in memory, writes nothing, and
+names each file that's missing, stale or no longer produced (exit 1), so the gate and
+`install.py check` can fail on drift.
 """
 
 from __future__ import annotations
@@ -249,6 +251,34 @@ def _prune(root: Path, path: Path) -> None:
         folder = folder.parent
 
 
+def _manifest_bytes(agents: ModuleType, out: dict[str, bytes]) -> bytes:
+    manifest = {"files": {rel: agents.lf_sha256(data) for rel, data in out.items()}}
+    return (json.dumps(manifest, indent=2, ensure_ascii=False) + "\n").encode("utf-8")
+
+
+def check(root: Path) -> tuple[int, list[str]]:
+    """(files produced, drift lines): `<path>: missing|stale|extra`. Writes nothing.
+
+    Content is compared with CRLF read as LF, as the manifest's hashes are, so a Windows
+    checkout of a current file isn't stale. `extra` is a file the last build recorded that the
+    sources no longer produce. The manifest itself is checked like any generated file.
+    """
+    agents = _load_agents()
+    out = build(root)
+    expected = {**out, MANIFEST_REL: _manifest_bytes(agents, out)}
+    lines: list[str] = []
+    for rel, data in sorted(expected.items()):
+        target = root / rel
+        if not target.is_file():
+            lines.append(f"{rel}: missing")
+        elif agents.lf_sha256(target.read_bytes()) != agents.lf_sha256(data):
+            lines.append(f"{rel}: stale")
+    lines += [
+        f"{rel}: extra" for rel in sorted(set(_manifest(root)) - set(out)) if (root / rel).is_file()
+    ]
+    return len(out), sorted(lines)
+
+
 def write(root: Path) -> dict[str, int]:
     """Build, write what changed, remove what's no longer produced, and record the manifest."""
     agents = _load_agents()
@@ -276,9 +306,7 @@ def write(root: Path) -> dict[str, int]:
         target.unlink()
         removed += 1
         _prune(root, target)
-    manifest = {"files": {rel: agents.lf_sha256(data) for rel, data in out.items()}}
-    text = json.dumps(manifest, indent=2, ensure_ascii=False) + "\n"
-    _write_bytes(root / MANIFEST_REL, text.encode("utf-8"))
+    _write_bytes(root / MANIFEST_REL, _manifest_bytes(agents, out))
     return {"files": len(out), "written": written, "removed": removed}
 
 
@@ -287,14 +315,29 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument(
         "--root", help="repository root (default: the nearest folder holding .agentic/)"
     )
+    parser.add_argument(
+        "--check", action="store_true", help="write nothing; exit 1 if any file is out of step"
+    )
     args = parser.parse_args(argv)
     try:
         agents = _load_agents()
         root = Path(args.root).resolve() if args.root else agents.state.find_root(Path.cwd())
-        counts = write(root)
+        if args.check:
+            files, drift = check(root)
+        else:
+            counts = write(root)
     except BuildError as exc:
         print(f"build.py: {exc}", file=sys.stderr)
         return 2
+    if args.check:
+        for line in drift:
+            print(line)
+        if drift:
+            shown = "file" if len(drift) == 1 else "files"
+            print(f"{len(drift)} {shown} out of step; run python .factory/adapters/build.py")
+            return 1
+        print(f"{files} tool files current")
+        return 0
     print(
         f"built {counts['files']} files: {counts['written']} written, {counts['removed']} removed"
     )
