@@ -135,7 +135,7 @@ The gate gives the same verdict on a developer's machine, in a git hook and in C
 3. **Pipeline file names avoid each provider's default file** (`.gitlab-ci.yml`, `azure-pipelines.yml`, `Jenkinsfile`), so the installer never overwrites a project's existing pipeline. Turning a pipeline on is one documented step.
 4. **The Python version in pipelines is 3.12, and Node is the current LTS.** Neither is configurable in E07.
 5. **The pre-push hook uses `gates.base_ref` from config,** usually the local `main`. It doesn't work out the remote's target branch.
-6. **This repo's CI runs the full suite on 2–4-core runners,** so it will be slower than locally (3.5 min on 32 cores). If a run nears the 600 s tests timeout or the 1800 s mutation timeout, T-final reports the timings before any change is made.
+6. **This repo's CI runs the full suite on 2–4-core runners,** so it will be slower than locally (3.5 min on 32 cores). If a run nears the 600 s tests timeout or the 1800 s mutation timeout, T-final reports the timings before any change is made. *(Change, 20 Nov 2026: Windows CI's mutation step passed 1800 s, then 3600 s, on PRs touching large kit files, while Ubuntu and macOS took about 1,160 s. The product owner decided that with several OSes, the GitHub workflow runs mutation once, on Ubuntu or else the first OS listed, and the other OSes run every other gate check with `--checks`. A single-OS workflow is unchanged. See `tests/test_pipelines_mutation.py`.)*
 
 ## Notes for the Architect (design, not requirements)
 

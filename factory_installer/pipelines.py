@@ -22,6 +22,12 @@ PYTHON_PROFILE = "python"
 TS_PROFILE = "ts-js"
 GITHUB_RUNNERS = {"ubuntu": "ubuntu-latest", "windows": "windows-latest", "macos": "macos-latest"}
 DEFAULT_OS = ("ubuntu",)
+# The gate's checks, in order (gate.py CHECK_ORDER); spec_for reads the kit's own list.
+CHECK_ORDER = ("format", "lint", "types", "build", "tests", "coverage", "mutation")
+# Mutation scores the tests, not the OS, and is by far the slowest check on Windows runners:
+# with several OSes, it runs once, on MUTATION_OS (else the first listed), and the rest skip it.
+MUTATION_CHECK = "mutation"
+MUTATION_OS = "ubuntu"
 HEADER = (
     "Software Factory gate (E07). Rendered by `python install.py ci {name}`; upgrades re-render it."
 )
@@ -38,6 +44,7 @@ class PipelineSpec:
     python_command: tuple[str, ...]
     base_branch: str
     os: tuple[str, ...] = DEFAULT_OS
+    check_order: tuple[str, ...] = CHECK_ORDER
 
     @property
     def python(self) -> bool:
@@ -55,6 +62,15 @@ class PipelineSpec:
         """The gate command line; `args` are passed through as written (provider syntax)."""
         command = " ".join(shlex.quote(word) for word in self.python_command)
         return " ".join((command, GATE, *args))
+
+    @property
+    def mutation_os(self) -> str:
+        """The one OS that runs mutation when several are listed."""
+        return MUTATION_OS if MUTATION_OS in self.os else self.os[0]
+
+    def without_mutation(self) -> str:
+        """`--checks` naming every gate check but mutation."""
+        return "--checks " + ",".join(c for c in self.check_order if c != MUTATION_CHECK)
 
 
 def _q(text: str) -> str:
@@ -80,6 +96,17 @@ def render_github(spec: PipelineSpec) -> str:
         "      fail-fast: false",
         "      matrix:",
         f"        os: [{runners}]",
+    ]
+    several = len(spec.os) > 1
+    if several:  # every OS but one skips mutation (see MUTATION_OS)
+        lines.append("        include:")
+        for name in spec.os:
+            if name != spec.mutation_os:
+                lines += [
+                    f"          - os: {GITHUB_RUNNERS[name]}",
+                    f"            checks: {_q(spec.without_mutation())}",
+                ]
+    lines += [
         "    runs-on: ${{ matrix.os }}",
         "    steps:",
         "      - uses: actions/checkout@v4",
@@ -100,13 +127,14 @@ def render_github(spec: PipelineSpec) -> str:
             "          node-version: lts/*",
             "      - run: npm ci",
         ]
+    matrix = ("${{ matrix.checks }}",) if several else ()
     lines += [
         "      - name: Gate (pull request)",
         "        if: github.event_name == 'pull_request'",
-        f"        run: {_q(spec.gate('--base-ref', 'origin/${{ github.base_ref }}'))}",
+        f"        run: {_q(spec.gate('--base-ref', 'origin/${{ github.base_ref }}', *matrix))}",
         "      - name: Gate",
         "        if: github.event_name != 'pull_request'",
-        f"        run: {_q(spec.gate())}",
+        f"        run: {_q(spec.gate(*matrix))}",
     ]
     return "\n".join(lines) + "\n"
 
@@ -357,10 +385,12 @@ def spec_for(
     base = str(settings.base_ref)
     base = base.removeprefix("origin/")
     os_list = tuple((options or {}).get("os", DEFAULT_OS))
+    check_order = tuple(getattr(gate, "CHECK_ORDER", CHECK_ORDER))
     return PipelineSpec(
         profiles=tuple(p.name for p in selected),
         has_uv_lock=(target / "uv.lock").is_file(),
         python_command=tuple(settings.python_command),
         base_branch=base,
         os=os_list,
+        check_order=check_order,
     )

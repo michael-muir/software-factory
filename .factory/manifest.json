@@ -62,7 +62,7 @@
     ".factory/workflow/templates/pr-evidence.md": "37a5869faa74bf8264ae307dfaff9b31d3130bbd82649fa87cd7d8e34dc6ebee",
     ".factory/workflow/templates/spec.md": "d693496d2b59fefdba7eda0c084e6a2efeb4315b443b00340b5e5ab8c7489066",
     ".factory/workflow/templates/task.md": "77b9cb800c167b24f213f4daebae12357421dfaad80a19daa30cf04a0c08e38a",
-    ".github/workflows/factory-gate.yml": "bcfac1e45bc3600567b32e75d6b5e0bedbf71bb0c0ee876b65af32c60a880469"
+    ".github/workflows/factory-gate.yml": "b461db9d3dad2ff275d5e665f2dc2d9fb897829d8c1a4ce92bda9ab7a411b33b"
   },
   "deleted": [],
   "pipelines": {
