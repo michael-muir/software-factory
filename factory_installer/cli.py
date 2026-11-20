@@ -18,7 +18,7 @@ from pathlib import Path
 from factory_installer import config_schema, manifest, pipelines
 from factory_installer.apply import apply, write_file
 from factory_installer.hooks import run_hooks
-from factory_installer.kit import KIT_ROOT, load_kit, load_kit_module
+from factory_installer.kit import KIT_ROOT, load_kit, load_kit_module, no_bytecode
 from factory_installer.plan import MERGE_SUFFIX, manifest_deleted, manifest_files, plan
 from factory_installer.report import Report
 from factory_installer.target import PathEscapeError, current_hashes, ensure_inside, find_git_root
@@ -176,7 +176,8 @@ def adapter_problems(repo: Path) -> list[str]:
     if module is None:
         return []
     try:
-        _, drift = module.check(repo)
+        with no_bytecode():
+            _, drift = module.check(repo)
     except module.BuildError as exc:
         return [f"{repo}: tool files can't be built: {exc}"]
     return [str(line) for line in drift]
@@ -188,7 +189,8 @@ def build_adapters(repo: Path) -> None:
     if module is None:
         return
     try:
-        module.write(repo)
+        with no_bytecode():
+            module.write(repo)
     except module.BuildError as exc:
         print(f"{repo}: tool files not built: {exc}", file=sys.stderr)
 

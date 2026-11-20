@@ -5,6 +5,8 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import sys
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from types import ModuleType
@@ -64,9 +66,19 @@ def load_kit_module(path: Path, name: str) -> ModuleType | None:
     sys.modules[name] = module  # dataclasses look the module up by name
     # The module may live in the repo being installed into: leave no __pycache__ there,
     # for it or for the sibling modules it loads.
+    with no_bytecode():
+        spec.loader.exec_module(module)
+    return module
+
+
+@contextmanager
+def no_bytecode() -> Iterator[None]:
+    """Write no bytecode while kit code runs, since it may live in the target repo.
+
+    Loading a module isn't enough: build.py loads agents.py and state.py only when it runs.
+    """
     saved, sys.dont_write_bytecode = sys.dont_write_bytecode, True
     try:
-        spec.loader.exec_module(module)
+        yield
     finally:
         sys.dont_write_bytecode = saved
-    return module
