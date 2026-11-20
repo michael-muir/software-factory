@@ -641,7 +641,7 @@ CLAUDE_CODE_AGENT_TOOLS = {
     "search": ["Glob", "Grep"],
     "edit": ["Edit", "MultiEdit", "NotebookEdit"],
     "write": ["Write"],
-    "run": ["Bash"],
+    "run": ["Bash", "PowerShell"],  # PowerShell: the primary shell on Windows
     "web": ["WebFetch", "WebSearch"],
 }
 COPILOT_AGENT_TOOLS = {
