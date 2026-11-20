@@ -4,10 +4,10 @@
   "files": {
     ".factory/.gitattributes": "a79691a93b46e49ce460c26ef22afcc03d6eca1e63bf2edbc20e96159510f6c9",
     ".factory/.gitignore": "a8115628a5707f002d62bcb965327fc7b13352c7a601dcccd2d41e90e1ccdc49",
-    ".factory/adapters/.gitkeep": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    ".factory/adapters/build.py": "071bc85a0de2ff706ab87e902433019735547efdd54c4dd5ae265e564f50ca81",
     ".factory/agents/_schema.md": "7a7b199af2c38436c757ff9ac918b1ac3d3394093762517d3e57ee7ef9867794",
     ".factory/agents/_template.md": "78747451ba7bc74a761d472082927905dfe4e1e0ca57a6e0f60fb345f77358ff",
-    ".factory/agents/agents.py": "495538e8b6c02d04af4d1f68c85d4ed70d08f0948b182b1692afbf17a73baa05",
+    ".factory/agents/agents.py": "09193f8401c8739e2f47c39a1d050d81dca07a4d2a941ce3146986701af02df3",
     ".factory/agents/claude-hook": "ab4eae1b4ee119292eacb584ea60245914b5d892fd46e096320817393bb25232",
     ".factory/agents/core/adversary.md": "0a96b3d374bedde31c431746865adb9c421b286f92b4162003f9eef4b1525b8c",
     ".factory/agents/core/architect.md": "d5351c425ad20fc4c2d72076113dd1a760519f46947fd5bdf7c82d924c475c3a",

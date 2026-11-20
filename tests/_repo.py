@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import subprocess
 import sys
@@ -75,7 +76,7 @@ KIT_FILES = frozenset(
         ".factory/workflow/templates/pr-evidence.md",
         ".factory/workflow/templates/spec.md",
         ".factory/workflow/templates/task.md",
-        ".factory/adapters/.gitkeep",
+        ".factory/adapters/build.py",
     }
 )
 STATE_FILES = frozenset(
@@ -109,6 +110,15 @@ def files_under(root: Path) -> set[str]:
         for name in filenames:
             found.add((Path(dirpath) / name).relative_to(root).as_posix())
     return found
+
+
+def generated_files(root: Path) -> set[str]:
+    """E12: the tool files the adapter build wrote, and its manifest (ADR 0023)."""
+    manifest = root / ".factory" / "adapters" / "generated.json"
+    if not manifest.is_file():
+        return set()
+    listed = json.loads(manifest.read_text(encoding="utf-8"))["files"]
+    return {*listed, ".factory/adapters/generated.json"}
 
 
 def snapshot(root: Path) -> dict[str, bytes]:

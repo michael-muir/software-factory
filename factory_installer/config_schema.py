@@ -88,6 +88,16 @@ def _check_names(value: Any) -> str | None:
     return None
 
 
+ADAPTER_TOOLS = ("claude-code", "copilot", "cursor")  # mirrors build.TOOLS (E12)
+
+
+def _adapter_tools(value: Any) -> str | None:
+    unknown = [item for item in value if item not in ADAPTER_TOOLS]
+    if unknown:
+        return f"unknown tool(s) {', '.join(unknown)}; valid: {', '.join(ADAPTER_TOOLS)}"
+    return None
+
+
 def _command(value: Any) -> str | None:
     if not value:
         return "must not be empty"
@@ -128,6 +138,14 @@ SECTIONS: dict[str, dict[str, Field]] = {
     },
     "models": {
         "cross_model_vendor": Field("str", "openai", _not_empty),
+    },
+    "adapters": {
+        "tools": Field(
+            "strlist",
+            list(ADAPTER_TOOLS),
+            _adapter_tools,
+            "the coding tools build.py writes files for",
+        ),
     },
     "telemetry": {
         "enabled": Field("bool", False),

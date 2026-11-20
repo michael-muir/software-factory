@@ -29,6 +29,7 @@ from tests._repo import (
     MANIFEST,
     STATE_FILES,
     files_under,
+    generated_files,
     git_repo,
     normalised_hash,
     run_install_py,
@@ -224,7 +225,7 @@ def test_fresh_install_creates_exactly_the_layout(
     repo = git_repo(tmp_path / "repo")
     code, _ = _install(capsys, str(repo))
     assert code == 0
-    assert files_under(repo) == INSTALLED_FILES
+    assert files_under(repo) == INSTALLED_FILES | generated_files(repo)
 
 
 @pytest.mark.ac("AC-06")
@@ -240,7 +241,7 @@ def test_fresh_install_leaves_existing_project_files_alone(
     assert code == 0
     after = snapshot(repo)
     assert {rel: after[rel] for rel in before} == before
-    assert set(after) - set(before) == INSTALLED_FILES
+    assert set(after) - set(before) == INSTALLED_FILES | generated_files(repo)
 
 
 @pytest.mark.ac("AC-07")

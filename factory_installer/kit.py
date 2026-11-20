@@ -62,5 +62,11 @@ def load_kit_module(path: Path, name: str) -> ModuleType | None:
         return None
     module = importlib.util.module_from_spec(spec)
     sys.modules[name] = module  # dataclasses look the module up by name
-    spec.loader.exec_module(module)
+    # The module may live in the repo being installed into: leave no __pycache__ there,
+    # for it or for the sibling modules it loads.
+    saved, sys.dont_write_bytecode = sys.dont_write_bytecode, True
+    try:
+        spec.loader.exec_module(module)
+    finally:
+        sys.dont_write_bytecode = saved
     return module

@@ -164,6 +164,17 @@ def docs_problems(repo: Path, kit_root: Path = KIT_ROOT) -> list[str]:
     return [] if module is None else [str(p) for p in module.validate(repo)]
 
 
+def build_adapters(repo: Path) -> None:
+    """E12: run the installed kit's adapter build. A failure warns; the install still succeeds."""
+    module = load_kit_module(repo / ".factory/adapters/build.py", "factory_target_build")
+    if module is None:
+        return
+    try:
+        module.write(repo)
+    except module.BuildError as exc:
+        print(f"{repo}: tool files not built: {exc}", file=sys.stderr)
+
+
 def run_install(
     target: Path,
     *,
@@ -224,6 +235,7 @@ def run_install(
         manifest_path = target / manifest.MANIFEST_RELPATH
         if not manifest_path.is_file() or manifest_path.read_bytes() != new_manifest:
             write_file(target, manifest.MANIFEST_RELPATH, new_manifest)
+        build_adapters(target)
 
     report = Report.from_steps(kit.version, str(target), dry_run, steps)
     print(report.to_json() if as_json else report.to_text())
