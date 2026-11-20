@@ -45,4 +45,4 @@ command = [
     "{base_ref}",
     "{changed_files}",
 ]
-timeout_s = 1800
+timeout_s = 3600  # slow CI runners (Windows passed 1800 s on PRs touching big kit files)
