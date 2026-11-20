@@ -41,6 +41,7 @@ jobs/<id>/usage/*.usd           # one file per `usage` report
 jobs/<id>/closed, cancel        # markers
 claims/<sha256 of path>         # a worktree claim, holding the job id
 stop                            # the time `run.py stop` was run
+rejected/<name>, <name>.job.toml # a hand-dropped request whose file name isn't a job id, and its record
 ```
 
 **The request:**
@@ -61,6 +62,7 @@ stop                            # the time `run.py stop` was run
 - `base`, `branch`, `worktree`, `task`, `open`
 - `created`, `started`, `finished`
 - `turns`, `usd`, `warnings`
+- `daemon`, naming the daemon that claimed the job (host, process id and a random suffix)
 - a `[[commands]]` table per command: `argv`, `exit_code`, `started`, `duration_s`, `log`
 
 `status` recomputes `usd` from the usage files, so late reports show. `--json` prints the same data as JSON.
