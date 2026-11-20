@@ -1,6 +1,6 @@
 # 0026 · PR bodies are checked in their own GitHub workflow, which reads the event file
 
-Status: Proposed · Date: 2026-11-19 · Epic: E08
+Status: Accepted · Date: 2026-11-19 · Epic: E08
 
 ## Context
 

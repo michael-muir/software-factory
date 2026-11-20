@@ -1,6 +1,6 @@
 # 0025 · PR evidence is drafted from the gate's JSON report and checked strictly on request
 
-Status: Proposed · Date: 2026-11-19 · Epic: E08
+Status: Accepted · Date: 2026-11-19 · Epic: E08
 
 ## Context
 

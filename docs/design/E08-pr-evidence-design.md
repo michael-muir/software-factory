@@ -1,7 +1,7 @@
 # E08 · PR evidence design note
 
 Spec: [E08 spec](../specs/E08-pr-evidence.md) · Issue: [#8](https://github.com/michael-muir/software-factory/issues/8)
-Status: **Proposed, awaiting product owner acceptance** · ADRs: [0025](../adr/0025-pr-evidence-is-drafted-from-the-gates-json-report.md) · [0026](../adr/0026-pr-bodies-are-checked-in-their-own-github-workflow.md)
+Status: **Accepted by the product owner, 19 Nov 2026** · ADRs: [0025](../adr/0025-pr-evidence-is-drafted-from-the-gates-json-report.md) · [0026](../adr/0026-pr-bodies-are-checked-in-their-own-github-workflow.md)
 
 ## Summary
 
@@ -118,7 +118,7 @@ E04's `lint_pr` runs first, unchanged. Then `lint_pr_strict(text, name, root, co
 - **E10-T3's relock** is needed in T5. Its locked file pins 16 skills and the `NOT_YET` exception. The exact diff goes to the product owner at T5's test commit: the skill added to `ALL_SKILLS`, `NOT_YET` emptied, and one `EXERCISED` entry. Nothing in T1 to T4 touches that file.
 - **The live record is retrospective in part.** The procedure the skill writes down (gate `--json-out`, `evidence.py`, fill in, `check-pr --strict`) is followed on T3's and T4's PRs, before the skill file exists. So E10's record cites those PRs and commits, which are known by T5. T5's own PR then follows the skill as written.
 - **Parallel edits to `gate.py`'s `Report`:** E12-T3 adds adapter drift fields. Whichever merges second updates `from_json` and its round-trip test. The orchestrator is told when T1's PR opens.
-- **ADR numbers:** 0025 and 0026 are the next free on main. If another branch takes them first, these are renumbered at merge.
+- **ADR numbers:** E08 owns 0025 to 0029 (the orchestrator, 19 Nov 2026), so these keep their numbers.
 - **Hex-word false positives:** a 7-character all-hex word with a digit, under "Gate evidence", could be mistaken for the commit. `evidence.py` always puts the commit first, and `--commits` in CI catches a wrong one.
 - **Lexical tag binding** can miss tests written in unusual forms. They fall back to listing the file, which still passes the trace check, and the author can edit the line.
 - **Windows runners and `shell: bash`:** GitHub's Windows images ship Git Bash, and E07's hooks already rely on it. The summary step is the only new bash step on Windows.
