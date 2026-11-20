@@ -63,7 +63,13 @@ def test_drift_read_back_from_json_still_fails_the_verdict() -> None:
 
 
 @pytest.mark.ac("E12-AC-08")
-def test_json_from_before_the_adapters_section_reads_as_not_checked() -> None:
+def test_json_from_before_the_adapters_section_shows_no_adapters_line() -> None:
+    # Change, 20 Nov 2026: a report from a gate older than E12-T3 has no adapters section.
+    # Read back, it shows no Adapters line, as that gate didn't, and writes none back out.
+    # E08-T2's locked tests read such reports, and pin their text without the line.
     data = json.loads(report(5, []).to_json())
     del data["adapters"]
-    assert "Adapters: not checked, no build.py" in gate.Report.from_json(data).to_text()
+    back = gate.Report.from_json(data)
+    assert "Adapters:" not in back.to_text()
+    assert "adapters" not in json.loads(back.to_json())
+    assert back.verdict == "pass"

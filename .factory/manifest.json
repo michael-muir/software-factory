@@ -27,7 +27,7 @@
     ".factory/agents/core/test-designer.md": "ccec2b0d2c29e729fee11abd8eb388481e9409895f6e05d2bda58b8a9efab43b",
     ".factory/agents/core/verifier.md": "b7c4402041b540e24ff8775a3d9df3a1147cb4703fd59efa73afcccebd57e3fe",
     ".factory/agents/cursor-hook": "b047603a1eea2a3aeb58ab648006ca98441a083d44ad8273b7b98dd02a582cf4",
-    ".factory/gates/gate.py": "406056e55c699aa7cf39edeaa1b948705af3c9c52e726dd43698ee6b55d08458",
+    ".factory/gates/gate.py": "1b96ee3d2855744705452644de80945a5bcca262851c5b1cb21f3e12cdb2b3aa",
     ".factory/gates/hooks/pre-commit": "da1de00b7e0c59878a3fecc4ce860932768257a0245444ce2b41943a7cc7e814",
     ".factory/gates/hooks/pre-push": "26cc1c0474a70e584489bbe3be2dfa2d00deb8f35e801b7238502b551da7bab7",
     ".factory/gates/hooks/run_hook.py": "c52c144e72fae1c3735e843cea3cadcfd752bac251b42c4044dc69061b389b1e",
