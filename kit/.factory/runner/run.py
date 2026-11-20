@@ -11,15 +11,21 @@ and each change to it is one atomic file operation (ADR 0030):
     jobs/<id>/commands/0001.toml commands added with `send`
     jobs/<id>/logs/0001.log      output of command 1
     jobs/<id>/closed             no more commands will come
+    jobs/<id>/cancel             `cancel` asks the job's daemon to halt it
+    jobs/<id>/handoff.md         the body of the handoff a halt writes in the worktree
     claims/<sha256 of path>      a worktree claim, holding the job id
     rejected/<name>              a hand-dropped file whose name isn't a job id, and its record
+    stop                         when `stop` was run: daemons started before then stop
 
 Usage:
     run.py --daemon
     run.py submit [--id ID] [--base REF] [--task TASK] [--open] [-- argv ...]
     run.py send <job> -- argv ...
     run.py close <job>
+    run.py cancel <job>
     run.py status <job> [--json]
+    run.py stop
+    run.py _host -- argv ...     (Windows, internal: runs one command inside a Job Object)
 
 Exit codes: 0 done, 1 refused, 2 bad input (arguments, config, unknown job, no git repo).
 """
@@ -27,6 +33,8 @@ Exit codes: 0 done, 1 refused, 2 bad input (arguments, config, unknown job, no g
 from __future__ import annotations
 
 import argparse
+import contextlib
+import ctypes
 import datetime as dt
 import hashlib
 import json
@@ -34,6 +42,7 @@ import os
 import re
 import secrets
 import shutil
+import signal
 import socket
 import subprocess
 import sys
@@ -50,6 +59,9 @@ FINISHED = ("succeeded", "failed", "halted")
 REQUEST_VERSION = 1
 CONFIG_REL = Path(".agentic") / "config.toml"
 POLL_SECONDS = 0.2  # one daemon pass; the spec allows 2 seconds for a pickup (ADR 0032)
+KILL_WAIT_S = 10.0  # AC-17: a killed tree is gone within 10 seconds
+HALT_STOPPED = "daemon stopped"
+HALT_CANCELLED = "cancelled"
 
 
 class BadInput(Exception):
@@ -400,6 +412,9 @@ Starter = Callable[[list[str], Path, Mapping[str, str], Path], Proc]
 class _NotStarted:
     """A command that could not start: it has already exited with 127."""
 
+    def __init__(self) -> None:
+        self.warnings: list[str] = []
+
     def poll(self) -> int | None:
         return 127
 
@@ -407,27 +422,223 @@ class _NotStarted:
         return None
 
 
+# --- process trees (ADR 0031) -----------------------------------------------------------------
+
+# Win32 values, from the Windows SDK's winnt.h.
+JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x2000
+JOB_OBJECT_EXTENDED_LIMIT_INFORMATION = 9  # the information class
+PROCESS_TERMINATE = 0x0001
+PROCESS_SET_QUOTA = 0x0100
+NO_JOB_OBJECT = (
+    "no Job Object ({}): a halt falls back to taskkill /T /F, "
+    "and an orphaned grandchild may survive it"
+)
+
+
+class _BasicLimits(ctypes.Structure):
+    _fields_ = [
+        ("PerProcessUserTimeLimit", ctypes.c_int64),
+        ("PerJobUserTimeLimit", ctypes.c_int64),
+        ("LimitFlags", ctypes.c_uint32),
+        ("MinimumWorkingSetSize", ctypes.c_size_t),
+        ("MaximumWorkingSetSize", ctypes.c_size_t),
+        ("ActiveProcessLimit", ctypes.c_uint32),
+        ("Affinity", ctypes.c_size_t),
+        ("PriorityClass", ctypes.c_uint32),
+        ("SchedulingClass", ctypes.c_uint32),
+    ]
+
+
+class _IoCounters(ctypes.Structure):
+    _fields_ = [
+        (name, ctypes.c_uint64)
+        for name in ("Read", "Write", "Other", "ReadBytes", "WriteBytes", "OtherBytes")
+    ]
+
+
+class _ExtendedLimits(ctypes.Structure):
+    """JOBOBJECT_EXTENDED_LIMIT_INFORMATION."""
+
+    _fields_ = [
+        ("BasicLimitInformation", _BasicLimits),
+        ("IoInfo", _IoCounters),
+        ("ProcessMemoryLimit", ctypes.c_size_t),
+        ("JobMemoryLimit", ctypes.c_size_t),
+        ("PeakProcessMemoryUsed", ctypes.c_size_t),
+        ("PeakJobMemoryUsed", ctypes.c_size_t),
+    ]
+
+
+def _kernel32() -> Any:
+    """kernel32 with every call the runner makes declared, so 64-bit handles aren't cut short."""
+    if sys.platform != "win32":
+        raise OSError("Job Objects exist only on Windows")
+    from ctypes import wintypes
+
+    lib = ctypes.WinDLL("kernel32", use_last_error=True)
+    handle, dword, boolean = wintypes.HANDLE, wintypes.DWORD, wintypes.BOOL
+    for name, restype, argtypes in (
+        ("CreateJobObjectW", handle, [ctypes.c_void_p, wintypes.LPCWSTR]),
+        ("SetInformationJobObject", boolean, [handle, ctypes.c_int, ctypes.c_void_p, dword]),
+        ("OpenProcess", handle, [dword, boolean, dword]),
+        ("AssignProcessToJobObject", boolean, [handle, handle]),
+        ("TerminateJobObject", boolean, [handle, ctypes.c_uint]),
+        ("CloseHandle", boolean, [handle]),
+    ):
+        function = getattr(lib, name)
+        function.restype = restype
+        function.argtypes = argtypes
+    return lib
+
+
+class JobObject:
+    """A Windows Job Object holding one process and everything it starts (ADR 0031).
+
+    It kills them all when it's terminated or its last handle closes, and no child may break
+    away. `kernel32` is the library to call: the real one unless a test passes a stand-in.
+    """
+
+    def __init__(self, pid: int, kernel32: Any = None) -> None:
+        self._kernel32 = _kernel32() if kernel32 is None else kernel32
+        self._handle: Any = self._call("CreateJobObjectW", None, None)
+        try:
+            info = _ExtendedLimits()
+            info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+            self._call(
+                "SetInformationJobObject",
+                self._handle,
+                JOB_OBJECT_EXTENDED_LIMIT_INFORMATION,
+                ctypes.byref(info),
+                ctypes.sizeof(info),
+            )
+            process = self._call("OpenProcess", PROCESS_SET_QUOTA | PROCESS_TERMINATE, False, pid)
+            try:
+                self._call("AssignProcessToJobObject", self._handle, process)
+            finally:
+                self._kernel32.CloseHandle(process)
+        except OSError:
+            self.close()
+            raise
+
+    def _call(self, name: str, *args: Any) -> Any:
+        result = getattr(self._kernel32, name)(*args)
+        if not result:
+            error = getattr(ctypes, "get_last_error", lambda: 0)()
+            raise OSError(f"{name} failed (Windows error {error})")
+        return result
+
+    def terminate(self) -> None:
+        self._call("TerminateJobObject", self._handle, 1)
+
+    def close(self) -> None:
+        """Close the job. KILL_ON_JOB_CLOSE ends anything still inside it."""
+        if self._handle:
+            self._kernel32.CloseHandle(self._handle)
+            self._handle = None
+
+
+class Tree:
+    """A running command and every process it starts (ADR 0031).
+
+    POSIX: the command leads a new session, and a kill sends SIGKILL to its process group, which
+    orphaned grandchildren keep. Windows: the command runs under `run.py _host` inside a Job
+    Object, and a kill terminates the job; without one, `taskkill /T /F` is the fallback, and
+    `warnings` says so.
+    """
+
+    def __init__(
+        self,
+        process: subprocess.Popen[bytes],
+        job: JobObject | None = None,
+        warnings: list[str] | None = None,
+    ) -> None:
+        self.process = process
+        self.job = job
+        self.warnings = warnings or []
+
+    def poll(self) -> int | None:
+        code = self.process.poll()
+        if code is not None and self.job is not None:
+            self.job.close()  # the command is done: nothing it left behind outlives it
+            self.job = None
+        return code
+
+    def kill(self) -> None:
+        """Kill the whole tree, and wait up to KILL_WAIT_S for the command to go."""
+        if sys.platform == "win32":
+            self._kill_windows()
+        else:
+            with contextlib.suppress(ProcessLookupError, PermissionError):  # already gone
+                os.killpg(self.process.pid, signal.SIGKILL)  # the session's group: pgid == pid
+        with contextlib.suppress(subprocess.TimeoutExpired):
+            self.process.wait(timeout=KILL_WAIT_S)
+
+    def _kill_windows(self) -> None:
+        if self.job is not None:
+            try:
+                self.job.terminate()
+                return
+            except OSError as exc:
+                self.warnings.append(NO_JOB_OBJECT.format(exc))
+            finally:
+                self.job.close()
+                self.job = None
+        if self.process.poll() is None:
+            subprocess.run(
+                ["taskkill", "/T", "/F", "/PID", str(self.process.pid)],
+                capture_output=True,
+                check=False,
+            )
+
+
+def _start_host(command: list[str], cwd: Path, env: Mapping[str, str], out: Any) -> Tree:
+    """Windows: the host waits for a line on stdin, so the command is born inside the job."""
+    host = subprocess.Popen(
+        [sys.executable, "-I", "-S", str(Path(__file__).resolve()), "_host", "--", *command],
+        cwd=cwd,
+        env=dict(env),
+        stdin=subprocess.PIPE,
+        stdout=out,
+        stderr=subprocess.STDOUT,
+        creationflags=getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0),
+    )
+    warnings: list[str] = []
+    job: JobObject | None = None
+    try:
+        job = JobObject(host.pid)
+    except OSError as exc:
+        warnings.append(NO_JOB_OBJECT.format(exc))
+    try:
+        assert host.stdin is not None
+        host.stdin.write(b"go\n")
+        host.stdin.close()
+    except OSError:
+        pass  # the host has already gone: poll() reports its exit
+    return Tree(host, job, warnings)
+
+
 def start_command(argv: list[str], cwd: Path, env: Mapping[str, str], log: Path) -> Proc:
-    """Start argv without a shell in cwd, its stdout and stderr going to log."""
+    """Start argv without a shell in cwd, as a Tree, its stdout and stderr going to log."""
     program = shutil.which(argv[0], path=env.get("PATH")) or argv[0]
-    group: dict[str, Any] = {"start_new_session": True}
-    if sys.platform == "win32":
-        group = {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
+    command = [program, *argv[1:]]
     log.parent.mkdir(parents=True, exist_ok=True)
     with open(log, "wb") as out:
         try:
-            return subprocess.Popen(
-                [program, *argv[1:]],
+            if sys.platform == "win32":
+                return _start_host(command, cwd, env, out)
+            process = subprocess.Popen(
+                command,
                 cwd=cwd,
                 env=dict(env),
                 stdin=subprocess.DEVNULL,
                 stdout=out,
                 stderr=subprocess.STDOUT,
-                **group,
+                start_new_session=True,
             )
         except OSError as exc:
             out.write(f"run.py: cannot start {argv[0]}: {exc}\n".encode())
             return _NotStarted()
+        return Tree(process)
 
 
 def claim_key(path: Path) -> str:
@@ -513,16 +724,37 @@ class Daemon:
         self.start = start
         self.name = name or f"{socket.gethostname()}:{os.getpid()}:{secrets.token_hex(3)}"
         self.running: dict[str, _Job] = {}
+        self.started = _now()  # a `stop` written after this stops the daemon
 
     # -- the loop
 
     def run(self) -> int:
+        """Tick until `stop` or Ctrl+C, then halt every running job (AC-07); queued ones wait."""
         try:
-            while True:
+            while not self.stop_requested():
                 self.tick(_now())
                 time.sleep(POLL_SECONDS)
         except KeyboardInterrupt:
-            return 0
+            pass
+        self.halt_all(_now(), HALT_STOPPED)
+        return 0
+
+    def stop_requested(self) -> bool:
+        try:
+            text = (self.repo.store / "stop").read_text(encoding="utf-8").strip()
+            when = _aware(dt.datetime.fromisoformat(text))
+        except (OSError, ValueError):
+            return False
+        return when is not None and when > self.started
+
+    def halt_all(self, now: dt.datetime, reason: str) -> None:
+        for job in list(self.running.values()):
+            try:
+                self.halt(job, now, reason)
+            except Exception as exc:  # one broken halt must not stop the others
+                job.record.update(status="halted", reason=reason, finished=now)
+                job.record["warnings"].append(f"halt: {exc}")
+                self._save(job.id, job.record)
 
     def tick(self, now: dt.datetime) -> None:
         self._claim_new(now)
@@ -682,6 +914,9 @@ class Daemon:
 
     def _advance(self, job: _Job, now: dt.datetime) -> None:
         commands: list[dict[str, Any]] = job.record["commands"]
+        if (self.repo.job(job.id) / "cancel").exists():
+            self.halt(job, now, HALT_CANCELLED)
+            return
         if job.proc is not None:
             code = job.proc.poll()
             if code is None:
@@ -716,7 +951,88 @@ class Daemon:
         env = dict(os.environ)
         env["FACTORY_JOB"] = job.id
         job.proc = self.start(argv, job.worktree, env, log)
+        job.record["warnings"].extend(getattr(job.proc, "warnings", []))
         self._save(job.id, job.record)
+
+    # -- halting (AC-16): whatever the cause, the same steps in the same order
+
+    def halt(self, job: _Job, now: dt.datetime, reason: str) -> None:
+        """Kill the tree, record the halt, drop queued commands, hand off, keep the worktree."""
+        self.running.pop(job.id, None)
+        if job.proc is not None:
+            job.proc.kill()
+            ran = job.record["commands"][-1]
+            ran["exit_code"] = job.proc.poll()
+            ran["duration_s"] = round(max((now - ran["started"]).total_seconds(), 0.0), 3)
+            job.record["turns"] += 1
+            job.proc = None
+        job.record.update(status="halted", reason=reason, finished=now)
+        self._save(job.id, job.record)  # queued commands are dropped: nothing runs them now
+        problem = self._handoff(job)
+        if problem:
+            job.record["warnings"].append(f"handoff: {problem}")
+            self._save(job.id, job.record)
+
+    def _handoff(self, job: _Job) -> str:
+        """Write the halt's handoff with the worktree's own state.py; say what failed, if it did."""
+        script = job.worktree / ".factory" / "state" / "state.py"
+        if not script.is_file():
+            return f"the worktree has no {script.relative_to(job.worktree).as_posix()}"
+        task = job.request["task"]
+
+        def state(*args: str) -> subprocess.CompletedProcess[str]:
+            return subprocess.run(
+                [sys.executable, str(script), "--root", str(job.worktree), *args],
+                cwd=job.worktree,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+        body = self.repo.job(job.id) / "handoff.md"
+        try:
+            if not (job.worktree / ".agentic" / "tasks" / f"{task}.md").is_file():
+                made = state("task", "new", task, f"Runner job {job.id}")
+                if made.returncode != 0:
+                    return _last_line(made.stderr or made.stdout)
+            _write_atomic(body, self._handoff_body(job))
+            wrote = state("handoff", task, "--from", "runner", "--body-file", str(body))
+        except OSError as exc:
+            return str(exc)
+        return "" if wrote.returncode == 0 else _last_line(wrote.stderr or wrote.stdout)
+
+    def _handoff_body(self, job: _Job) -> str:
+        record = job.record
+        commands: list[dict[str, Any]] = record["commands"]
+        done = [f"- Runner job `{job.id}` ran {len(commands)} command(s):"]
+        done += [
+            f"  {n}. `{' '.join(c['argv'])}` exited {c['exit_code']}"
+            for n, c in enumerate(commands, start=1)
+        ]
+        done.append(f"- Turns used: {record['turns']}. Cost reported: ${record['usd']:.2f}.")
+        branch = record["branch"]
+        following = [
+            f"- The runner halted this job: {record['reason']}.",
+            f"- The worktree is kept at `{job.worktree}`, on branch `{branch}`.",
+            "- To carry on from where it stopped, submit a follow-up job from the branch: "
+            f"`python .factory/runner/run.py submit --base {branch} --task {job.request['task']}`.",
+        ]
+        return "\n".join(
+            [
+                "## Done",
+                "",
+                *done,
+                "",
+                "## Next",
+                "",
+                *following,
+                "",
+                "## Open questions",
+                "",
+                "- none",
+                "",
+            ]
+        )
 
     def _end(self, job: _Job, now: dt.datetime, status: str, reason: str) -> None:
         self.running.pop(job.id, None)
@@ -827,6 +1143,69 @@ def _close(args: argparse.Namespace, argv: list[str] | None) -> int:
     return 0
 
 
+def _cancel(args: argparse.Namespace, argv: list[str] | None) -> int:
+    if argv is not None:
+        raise BadInput("cancel takes no command")
+    repo = find_repo(Path.cwd())
+    find_request(repo, args.job)  # an unknown job exits 2
+    _refuse_if_finished(repo, args.job)
+    claimed = repo.job(args.job) / "request.toml"
+    try:
+        os.rename(repo.queue / f"{args.job}.toml", claimed)  # beats any daemon to the claim
+    except (FileNotFoundError, FileExistsError):
+        pass  # a daemon has it: it halts the job when it sees the marker
+    else:
+        request = _read_toml(claimed)
+        now = _now()
+        record = {
+            "id": args.job,
+            "status": "halted",
+            "reason": HALT_CANCELLED,
+            "base": request["base"],
+            "branch": f"factory/{args.job}",
+            "task": request["task"],
+            "open": request["open"],
+            "created": _aware(request["submitted"]),
+            "finished": now,
+            "turns": 0,
+            "usd": 0.0,
+            "warnings": ["cancelled before it started: there was no worktree, so no handoff"],
+            "commands": [],
+        }
+        _write_atomic(repo.job(args.job) / "job.toml", dumps(record))
+        return 0
+    try:
+        with open(repo.job(args.job) / "cancel", "x", encoding="utf-8") as f:
+            f.write(_now().isoformat() + "\n")
+    except FileExistsError:
+        pass  # already asked
+    return 0
+
+
+def _stop(args: argparse.Namespace, argv: list[str] | None) -> int:
+    if argv is not None:
+        raise BadInput("stop takes no command")
+    repo = find_repo(Path.cwd())
+    repo.store.mkdir(parents=True, exist_ok=True)
+    _write_atomic(repo.store / "stop", _now().isoformat() + "\n")
+    return 0
+
+
+def _host(args: argparse.Namespace, argv: list[str] | None) -> int:
+    """Windows (ADR 0031): wait for the daemon's go, which comes once this process is in the
+    job, then run the command with an empty stdin and exit with its code."""
+    if not argv:
+        raise BadInput("_host needs a command after --")
+    if sys.stdin.readline().strip() != "go":
+        print("run.py _host: the daemon never said go, so the command didn't run", file=sys.stderr)
+        return 1
+    try:
+        return subprocess.call(argv, stdin=subprocess.DEVNULL)
+    except OSError as exc:
+        print(f"run.py: cannot start {argv[0]}: {exc}", file=sys.stderr)
+        return 127
+
+
 def _jsonable(value: object) -> object:
     if isinstance(value, dt.datetime):
         return value.isoformat()
@@ -878,10 +1257,20 @@ def _parser() -> argparse.ArgumentParser:
     close.add_argument("job")
     close.set_defaults(run=_close)
 
+    cancel = commands.add_parser("cancel", help="halt a job, queued or running")
+    cancel.add_argument("job")
+    cancel.set_defaults(run=_cancel)
+
     status = commands.add_parser("status", help="print a job's record")
     status.add_argument("job")
     status.add_argument("--json", action="store_true", help="print it as JSON")
     status.set_defaults(run=_status)
+
+    stop = commands.add_parser("stop", help="stop the daemons; they halt their running jobs")
+    stop.set_defaults(run=_stop)
+
+    host = commands.add_parser("_host", help="internal: run one command inside a Job Object")
+    host.set_defaults(run=_host)
     return parser
 
 
