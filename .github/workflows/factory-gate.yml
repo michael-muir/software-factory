@@ -10,6 +10,11 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
+        include:
+          - os: windows-latest
+            checks: "--checks format,lint,types,build,tests,coverage"
+          - os: macos-latest
+            checks: "--checks format,lint,types,build,tests,coverage"
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -22,7 +27,7 @@ jobs:
       - run: uv sync --locked
       - name: Gate (pull request)
         if: github.event_name == 'pull_request'
-        run: "uv run python .factory/gates/gate.py --base-ref origin/${{ github.base_ref }}"
+        run: "uv run python .factory/gates/gate.py --base-ref origin/${{ github.base_ref }} ${{ matrix.checks }}"
       - name: Gate
         if: github.event_name != 'pull_request'
-        run: "uv run python .factory/gates/gate.py"
+        run: "uv run python .factory/gates/gate.py ${{ matrix.checks }}"
