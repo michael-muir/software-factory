@@ -70,7 +70,8 @@ def test_python_profile_matches_the_spec() -> None:
             "{changed_files}",
         ],
     }
-    assert checks["mutation"]["timeout_s"] == 1800
+    # Change, 20 Nov 2026: Windows CI mutation passed 1800 s on PRs touching big kit files.
+    assert checks["mutation"]["timeout_s"] == 3600
     # E07/T4 change: the Windows CI runner needs more than 600 s for this repo's tests.
     assert checks["tests"]["timeout_s"] == 1200
     timed = ("mutation", "tests")
