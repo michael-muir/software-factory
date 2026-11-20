@@ -1,7 +1,7 @@
 # E16 · Machine daemon and worktrees — Spec
 
 Issue: [#16](https://github.com/michael-muir/software-factory/issues/16) · Milestone: M2 · One job, end to end · Depends on: E05 (done)
-Status: **Draft, awaiting product owner approval** · Next: Architect design note and ADRs, then failing tests per AC
+Status: **Approved by the product owner, 19 Nov 2026** · Next: Architect design note and ADRs, then failing tests per AC
 
 ## Goal
 
@@ -106,7 +106,7 @@ The cost cap is `budgets.per_job_usd × budgets.halt_at`, and the warning is at 
 - **AC-19** `install.py check` validates the `[runner]` keys by the rules in the table above, the default config that `install.py` writes includes `[runner]` with its defaults and comments, and a config without `[runner]` stays valid. This repo's `.agentic/config.toml` gets the section.
 - **AC-20** The runner is a kit file, installed by `install.py` and listed in the kit layout tests, and this repo commits its install. CI runs the runner's tests on Ubuntu, macOS and Windows. ruff, `ruff format --check` and `mypy --strict` pass, and every AC above has at least one test tagged `E16-AC-nn`.
 
-## Assumptions (to confirm with approval)
+## Assumptions (confirmed with approval, 19 Nov 2026)
 
 1. **Commands sent over time.** A job is either one command (`submit -- argv`) or open (`submit --open`, then `send` and `close`), so a cloud session can drive a job one turn at a time. E23 adds the transport for `send`; the file queue is the same.
 2. **The result rule (AC-11).** A one-command job fails on a non-zero exit; an open job fails or succeeds on its last command, so a red gate in the middle of an agent loop doesn't end the job.
