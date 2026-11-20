@@ -110,3 +110,15 @@ def test_e10_spec_defines_ac_01_to_ac_10() -> None:
 def test_every_e10_ac_has_a_test(request: pytest.FixtureRequest) -> None:
     missing = spec_ac_ids("E10") - request.config.stash[COLLECTED_AC_IDS]
     assert not missing, f"E10 ACs with no test: {sorted(missing)}"
+
+
+@pytest.mark.ac("E12-AC-12")
+def test_e12_spec_defines_ac_01_to_ac_12() -> None:
+    assert spec_ac_ids("E12") == {f"E12-AC-{n:02d}" for n in range(1, 13)}
+
+
+@pytest.mark.ac("E12-AC-12")
+def test_every_e12_ac_but_the_live_check_has_a_test(request: pytest.FixtureRequest) -> None:
+    # AC-11 is the product owner's live check in each tool; the PR records what they saw.
+    missing = spec_ac_ids("E12") - {"E12-AC-11"} - request.config.stash[COLLECTED_AC_IDS]
+    assert not missing, f"E12 ACs with no test: {sorted(missing)}"
