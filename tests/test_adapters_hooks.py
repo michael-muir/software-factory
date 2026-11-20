@@ -45,11 +45,16 @@ CURSOR_TOOLS = {
 }
 
 CLAUDE_ENTRY: dict[str, Any] = {
-    "matcher": "Read|Glob|Grep|Edit|MultiEdit|NotebookEdit|Write|Bash|WebFetch|WebSearch",
+    "matcher": (
+        "Read|Glob|Grep|Edit|MultiEdit|NotebookEdit|Write|Bash|PowerShell|WebFetch|WebSearch"
+    ),
     "hooks": [
         {
             "type": "command",
-            "command": 'sh "$CLAUDE_PROJECT_DIR/.factory/agents/claude-hook"',
+            "command": (
+                "git -c 'alias.factory-hook=!sh .factory/agents/claude-hook' factory-hook;"
+                " exit $LASTEXITCODE"
+            ),
             "timeout": 10,
             "onFailure": "block",
         }
@@ -58,10 +63,22 @@ CLAUDE_ENTRY: dict[str, Any] = {
 COPILOT_ENTRY = {
     "type": "command",
     "bash": "sh .factory/agents/copilot-hook",
-    "powershell": "python .factory/agents/agents.py hook copilot",
+    "powershell": (
+        "git -c 'alias.factory-hook=!sh .factory/agents/copilot-hook' factory-hook;"
+        " exit $LASTEXITCODE"
+    ),
     "timeoutSec": 10,
 }
-CURSOR_ENTRY = {"command": "sh .factory/agents/cursor-hook", "timeout": 10, "failClosed": True}
+# Cursor blocks a permission hook that exits 0 with no output, when failClosed is set.
+CURSOR_ALLOW = '{"permission": "allow"}\n'
+CURSOR_ENTRY = {
+    "command": (
+        "git -c 'alias.factory-hook=!sh .factory/agents/cursor-hook' factory-hook;"
+        " exit $LASTEXITCODE"
+    ),
+    "timeout": 10,
+    "failClosed": True,
+}
 
 
 def hook_repo(root: Path) -> Path:
@@ -421,13 +438,13 @@ def test_the_cursor_hook_tool_map() -> None:
 
 
 @pytest.mark.ac("E12-AC-05")
-def test_an_allowed_cursor_call_exits_0_with_no_output(
+def test_an_allowed_cursor_call_exits_0_with_the_allow_json(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     root = hook_repo(tmp_path)
     monkeypatch.chdir(root)
     payload = cursor(root, "Read", file_path="src/app.py")
-    assert run_hook(monkeypatch, capsys, "cursor", payload, "reader") == (0, "", "")
+    assert run_hook(monkeypatch, capsys, "cursor", payload, "reader") == (0, CURSOR_ALLOW, "")
 
 
 @pytest.mark.ac("E12-AC-05")
@@ -512,7 +529,7 @@ def test_a_cursor_payload_sent_to_the_claude_code_hook_is_read_as_cursor(
     code, out, _ = run_hook(monkeypatch, capsys, "claude-code", payload, "reader")
     cursor_denied(code, out)
     allowed = cursor(root, "Read", file_path="src/app.py")
-    assert run_hook(monkeypatch, capsys, "claude-code", allowed, "reader") == (0, "", "")
+    assert run_hook(monkeypatch, capsys, "claude-code", allowed, "reader") == (0, CURSOR_ALLOW, "")
 
 
 @pytest.mark.ac("E12-AC-04")
@@ -652,7 +669,8 @@ def test_an_unmapped_tool_is_denied_with_a_role_and_allowed_without(
     payload = payload_for(entry, root, name, prompt="do it")
     code, out, err = run_hook(monkeypatch, capsys, entry, payload, "operator")
     assert name in denied(entry, code, out, err)
-    assert run_hook(monkeypatch, capsys, entry, payload, None) == (0, "", "")
+    allowed = CURSOR_ALLOW if entry == "cursor" else ""
+    assert run_hook(monkeypatch, capsys, entry, payload, None) == (0, allowed, "")
 
 
 @pytest.mark.ac("E12-AC-06")

@@ -59,7 +59,7 @@ Globs and paths are rejected if they're absolute, contain `\`, or contain a `..`
    - It must match `[scope].write`, when that's set.
    - It must not be a locked file.
 3. **`run`**, when `[scope].run` is set:
-   - The command must not contain shell control text: `;`, `&`, `|`, `` ` ``, `$(`, `>`, `<` or a newline. Without this rule, `uv run pytest && rm -rf .` would pass a `uv run pytest` prefix.
+   - The command must not contain shell control text: `;`, `&`, `|`, `` ` ``, `$`, `(`, `)`, `>`, `<`, `@` at the start of a word, or a line break of any kind (a control character, U+2028 or U+2029). Without this rule, `uv run pytest && rm -rf .` would pass a `uv run pytest` prefix. `$`, the parentheses and `@` were added on 20 Nov 2026 for PowerShell, which evaluates `(...)`, `$var`, `$x.Method()` and `@(...)` inside a command's arguments.
    - Its `shlex.split` tokens must start with one prefix's tokens.
 
 `read`, `search` and `web` have no scopes in E03.
@@ -68,7 +68,7 @@ Globs and paths are rejected if they're absolute, contain `\`, or contain a `..`
 - reads the JSON on stdin
 - resolves the role
 - maps `tool_name` with the table below
-- takes `tool_input.file_path` for Edit, MultiEdit and Write, `tool_input.notebook_path` for NotebookEdit, and `tool_input.command` for Bash
+- takes `tool_input.file_path` for Edit, MultiEdit and Write, `tool_input.notebook_path` for NotebookEdit, and `tool_input.command` for Bash and PowerShell
 - calls `allow`
 
 The whole body runs inside `try`/`except BaseException`, so a crash prints the error and exits 2 instead of letting the call through.
@@ -79,7 +79,7 @@ The whole body runs inside `try`/`except BaseException`, so a crash prints the e
 | Glob, Grep | search |
 | Edit, MultiEdit, NotebookEdit | edit |
 | Write | write |
-| Bash | run |
+| Bash, PowerShell | run |
 | WebFetch, WebSearch | web |
 
 **Locks** (ADR 0018):
@@ -112,7 +112,7 @@ Both steps run before `--checks` is applied, so the pre-commit hook enforces loc
 
 ## Dogfooding (AC-13)
 
-- **`.claude/settings.json`:** a `PreToolUse` hook with matcher `Read|Glob|Grep|Edit|MultiEdit|NotebookEdit|Write|Bash|WebFetch|WebSearch`, command `sh "${CLAUDE_PROJECT_DIR}/.factory/agents/claude-hook"`, `onFailure: "block"` and a 10 s timeout. It's added in T3, once the hook exists.
+- **`.claude/settings.json`:** a `PreToolUse` hook with matcher `Read|Glob|Grep|Edit|MultiEdit|NotebookEdit|Write|Bash|PowerShell|WebFetch|WebSearch` (PowerShell added on 20 Nov 2026), command `sh "${CLAUDE_PROJECT_DIR}/.factory/agents/claude-hook"`, `onFailure: "block"` and a 10 s timeout. It's added in T3, once the hook exists.
 - **Locks:** T2 and T3 lock their failing tests with `agents.py lock E03-Tn <files>` in the locked-tests commit, before the implementation commit. T1 builds the lock command, so its tests are locked when T1 ends.
 - **State:** the tasks E03-T1 to E03-T3 are tracked in `.agentic/`.
 

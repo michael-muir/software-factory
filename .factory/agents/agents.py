@@ -27,6 +27,7 @@ import re
 import shlex
 import sys
 import tomllib
+import unicodedata
 from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
@@ -65,7 +66,18 @@ SCOPE_NEEDS = {"write": ("edit", "write"), "run": ("run",)}
 AGENT_HEADINGS = ("## Scope", "## Inputs", "## Outputs")
 ROLE_NAME = re.compile(r"[a-z0-9-]+", re.ASCII)
 SHA256 = re.compile(r"[0-9a-f]{64}")
-SHELL_CONTROL = (";", "&", "|", "`", "$(", ">", "<", "\n", "\r")
+# Text that chains, substitutes or redirects a command in sh, bash or PowerShell. PowerShell also
+# evaluates `(...)`, `$var` and `$x.Method()` inside a command's arguments, and `@name` or `@(...)`
+# at the start of one. Line breaks of any kind (control characters, U+2028, U+2029) count too.
+SHELL_CONTROL = (";", "&", "|", "`", "$", "(", ")", ">", "<", "\n", "\r")
+SPLAT = re.compile(r"(?<!\S)@")
+
+
+def shell_control(command: str) -> bool:
+    """Does `command` hold text a POSIX shell or PowerShell reads as more than one plain command?"""
+    if any(mark in command for mark in SHELL_CONTROL) or SPLAT.search(command):
+        return True
+    return any(unicodedata.category(c) in ("Cc", "Zl", "Zp") for c in command if c != "\t")
 
 
 class Refused(Exception):
@@ -587,7 +599,7 @@ def _decide(
             return Decision(False, f"{who} may only write {', '.join(globs)}, not {rel}")
     if tool == "run" and command is not None and scope.get("run"):
         prefixes = scope["run"]
-        if any(mark in command for mark in SHELL_CONTROL):
+        if shell_control(command):
             return Decision(False, f"{who} may not run commands with shell control characters")
         try:
             words = shlex.split(command)
@@ -618,6 +630,7 @@ CLAUDE_CODE_TOOLS = {
     "NotebookEdit": "edit",
     "Write": "write",
     "Bash": "run",
+    "PowerShell": "run",  # Windows; the docs' matcher is Bash|PowerShell
     "WebFetch": "web",
     "WebSearch": "web",
 }
@@ -628,7 +641,7 @@ CLAUDE_CODE_AGENT_TOOLS = {
     "search": ["Glob", "Grep"],
     "edit": ["Edit", "MultiEdit", "NotebookEdit"],
     "write": ["Write"],
-    "run": ["Bash"],
+    "run": ["Bash", "PowerShell"],  # PowerShell: the primary shell on Windows
     "web": ["WebFetch", "WebSearch"],
 }
 COPILOT_AGENT_TOOLS = {
@@ -793,8 +806,14 @@ def _hook_decision(kind: str, payload: Mapping[str, object], env: Mapping[str, s
 
 
 def _answer(kind: str, decision: Decision) -> int:
-    """Allow: exit 0, no output. Deny: exit 2, which all three tools honour, in the tool's form."""
+    """Allow: exit 0. Deny: exit 2, which all three tools honour, in the tool's form.
+
+    Cursor's permission hooks must answer exit 0 with JSON: with failClosed, "no output" blocks
+    the call. So Cursor's allow prints {"permission": "allow"}; the others print nothing.
+    """
     if decision.allowed:
+        if kind == "cursor":
+            print(json.dumps({"permission": "allow"}))
         return 0
     reason = f"factory hook: blocked: {decision.reason}"
     if kind == "copilot":
@@ -806,11 +825,16 @@ def _answer(kind: str, decision: Decision) -> int:
     return 2
 
 
-def hook(entry: str, stdin: str, env: Mapping[str, str]) -> int:
-    """Judge one tool call. The payload's shape picks the tool; `entry` answers if it can't."""
+def hook(entry: str, stdin: str | bytes, env: Mapping[str, str]) -> int:
+    """Judge one tool call. The payload's shape picks the tool; `entry` answers if it can't.
+
+    Raw stdin is read as UTF-8 whatever the locale, and leading byte order marks are dropped:
+    Cursor on Windows pipes the payload through PowerShell, and Windows PowerShell 5.1 adds two.
+    """
     kind = entry
     try:
-        payload = json.loads(stdin)
+        text = stdin.decode("utf-8") if isinstance(stdin, bytes) else stdin
+        payload = json.loads(text.lstrip("\ufeff"))
         if not isinstance(payload, dict):
             raise Unusable("hook input must be a JSON object")
         kind = recognise(payload) or entry
@@ -859,7 +883,8 @@ def _allow(root: Path, args: argparse.Namespace) -> int:
 
 
 def _hook(root: Path, args: argparse.Namespace) -> int:
-    return hook(args.tool, sys.stdin.read(), os.environ)
+    raw = getattr(sys.stdin, "buffer", None)  # bytes, not the locale's decoding of them
+    return hook(args.tool, sys.stdin.read() if raw is None else raw.read(), os.environ)
 
 
 def _parser() -> argparse.ArgumentParser:

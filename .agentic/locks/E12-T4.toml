@@ -1,0 +1,6 @@
+task = "E12-T4"
+locked = 2026-11-20T19:11:42Z
+
+[[files]]
+path = "tests/test_adapters_powershell.py"
+sha256 = "650059cc855f417620d3115919528b25886c5f414e1737ad4feb18910f1699ca"

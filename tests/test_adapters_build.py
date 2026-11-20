@@ -32,7 +32,7 @@ CLAUDE = {
     "search": ["Glob", "Grep"],
     "edit": ["Edit", "MultiEdit", "NotebookEdit"],
     "write": ["Write"],
-    "run": ["Bash"],
+    "run": ["Bash", "PowerShell"],
     "web": ["WebFetch", "WebSearch"],
 }
 COPILOT = {

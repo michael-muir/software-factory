@@ -52,11 +52,13 @@ The factory's roles and skills are written once, in the neutral formats of E03 a
 | `search` | Glob, Grep | `search` | `glob`, `grep` | `Grep` |
 | `edit` | Edit, MultiEdit, NotebookEdit | `edit` | `edit` | `Write` (Cursor matches edits as writes) |
 | `write` | Write | `edit` | `create` | `Write` |
-| `run` | Bash | `execute` | `bash`, `powershell` | `Shell` |
+| `run` | Bash, PowerShell | `execute` | `bash`, `powershell` | `Shell` |
 | `web` | WebFetch, WebSearch | `web` | `web_fetch` | none documented |
 
+Claude Code's hook sees the same names as its agent `tools`. `PowerShell` is its shell tool on Windows, so the generated `PreToolUse` matcher covers `Bash|PowerShell` (change of 20 Nov 2026, below).
+
 **Who is the role**, per tool (E03's ADR 0017 order):
-- **Claude Code:** `agent_type`, then `FACTORY_ROLE`.
+- **Claude Code:** `agent_type`, then `FACTORY_ROLE`. A subagent's calls carry `agent_id` and `agent_type`, its name, which comes before the session's own `--agent`.
 - **Copilot:** `agentType` (or `agent_type`), then `FACTORY_ROLE`.
 - **Cursor:** `FACTORY_ROLE` only, because Cursor's `preToolUse` payload names no agent.
 
@@ -79,7 +81,7 @@ The factory's roles and skills are written once, in the neutral formats of E03 a
 **The hooks**
 
 - **AC-04** `agents.py hook copilot` reads Copilot's `preToolUse` payload, in either its camelCase form (`toolName`, `toolArgs`) or its VS Code form (`tool_name`, `tool_input`). It maps the tool, resolves the role, and applies E03's `allow`. To deny, it prints `{"permissionDecision": "deny", "permissionDecisionReason": "<reason>"}` and exits 2. To allow, it prints nothing and exits 0.
-- **AC-05** `agents.py hook cursor` reads Cursor's `preToolUse` payload (`tool_name`, `tool_input`), maps the tool, resolves the role from `FACTORY_ROLE`, and applies `allow`. To deny, it prints `{"permission": "deny", "user_message": ..., "agent_message": ...}` and exits 2. To allow, it prints nothing and exits 0.
+- **AC-05** `agents.py hook cursor` reads Cursor's `preToolUse` payload (`tool_name`, `tool_input`), maps the tool, resolves the role from `FACTORY_ROLE`, and applies `allow`. To deny, it prints `{"permission": "deny", "user_message": ..., "agent_message": ...}` and exits 2. To allow, it prints `{"permission": "allow"}` and exits 0, because Cursor blocks a fail-closed permission hook that gives no output (changed 20 Nov 2026, below).
 - **AC-06** **Both hooks fail closed,** as E03's does (AC-08 there): bad input, an unknown role, invalid agent files or a crash give a deny with a reason, never an allow. Unmapped tools are denied when a role is set, and allowed when none is. Locked files are always protected.
 
 **Staying in step**
@@ -105,3 +107,8 @@ The factory's roles and skills are written once, in the neutral formats of E03 a
 4. **A hook timeout lets the call through** in Copilot (as its docs say) and in Claude Code. The gate, which checks locks, is the backstop.
 5. **The exact payload fields for a file's path,** in Copilot's `toolArgs` and Cursor's `tool_input`, are confirmed by the Architect against each tool's documentation before tests are written. The design note records them.
 6. **Generated files aren't kit files.** They belong to the repo, are rebuilt from its own roles and skills, and are never kept on upgrade. A hand edit is overwritten by the next build, which is why they carry a notice.
+
+## Changes
+
+- **20 Nov 2026, approved by the product owner after the AC-11 live check failed on Windows:** Claude Code's `PowerShell` tool maps to `run`, and the generated `PreToolUse` matcher includes it. Claude Code's hooks docs (code.claude.com/docs/en/hooks) use the matcher `Bash|PowerShell`, and give the tool the same input fields as Bash, with the command in `tool_input.command`. Before this change, a PowerShell call skipped the hook, so a role could run any command. E03's shell control check also covers PowerShell syntax now. A role with `run` lists both `Bash` and `PowerShell` in its Claude Code agent file, because Claude Code treats PowerShell as the primary shell on Windows once the tool is on (product owner, the same day). The hook holds both to the same `run` scope. This was task E12-T4, and it ships in the same PR as E12-T3.
+- **20 Nov 2026, after the Cursor CLI live check blocked allowed calls (AC-05):** an allowed Cursor call prints `{"permission": "allow"}` and exits 0. Cursor's hooks docs (cursor.com/docs/hooks) say that with `failClosed`, "hook failures (crash, timeout, non-zero exit code, no output) block the action", and that exit 0 means "use the JSON output". The deny answer already matched the `preToolUse` schema (`permission`, `user_message`, `agent_message`). Claude Code and Copilot still allow with no output.

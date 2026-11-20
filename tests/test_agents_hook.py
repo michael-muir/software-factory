@@ -345,6 +345,7 @@ def test_the_claude_code_tool_map() -> None:
         "NotebookEdit": "edit",
         "Write": "write",
         "Bash": "run",
+        "PowerShell": "run",
         "WebFetch": "web",
         "WebSearch": "web",
     }

@@ -2,11 +2,11 @@
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "Read|Glob|Grep|Edit|MultiEdit|NotebookEdit|Write|Bash|WebFetch|WebSearch",
+        "matcher": "Read|Glob|Grep|Edit|MultiEdit|NotebookEdit|Write|Bash|PowerShell|WebFetch|WebSearch",
         "hooks": [
           {
             "type": "command",
-            "command": "sh \"$CLAUDE_PROJECT_DIR/.factory/agents/claude-hook\"",
+            "command": "git -c 'alias.factory-hook=!sh .factory/agents/claude-hook' factory-hook; exit $LASTEXITCODE",
             "timeout": 10,
             "onFailure": "block"
           }

@@ -18,7 +18,7 @@ from pathlib import Path
 from factory_installer import config_schema, manifest, pipelines
 from factory_installer.apply import apply, write_file
 from factory_installer.hooks import run_hooks
-from factory_installer.kit import KIT_ROOT, load_kit, load_kit_module
+from factory_installer.kit import KIT_ROOT, load_kit, load_kit_module, no_bytecode
 from factory_installer.plan import MERGE_SUFFIX, manifest_deleted, manifest_files, plan
 from factory_installer.report import Report
 from factory_installer.target import PathEscapeError, current_hashes, ensure_inside, find_git_root
@@ -135,7 +135,9 @@ def run_check(repo: Path) -> int:
         default = config_schema.toml_value(config_schema.default_for(key))
         print(f"{shown}: {key}: not set, using default {default}")
 
-    problems = state_problems(repo) + agent_problems(repo) + docs_problems(repo)
+    problems = (
+        state_problems(repo) + agent_problems(repo) + docs_problems(repo) + adapter_problems(repo)
+    )
     for problem in problems:
         print(problem)
     if result.errors or problems:
@@ -164,13 +166,31 @@ def docs_problems(repo: Path, kit_root: Path = KIT_ROOT) -> list[str]:
     return [] if module is None else [str(p) for p in module.validate(repo)]
 
 
+def adapter_problems(repo: Path) -> list[str]:
+    """E12: the target's tool files that drift from their sources, checked by its own build.py.
+
+    The repo's installed build.py, as for the build itself: the check names what that build
+    would change. A kit without build.py checks nothing.
+    """
+    module = load_kit_module(repo / ".factory/adapters/build.py", "factory_target_build")
+    if module is None:
+        return []
+    try:
+        with no_bytecode():
+            _, drift = module.check(repo)
+    except module.BuildError as exc:
+        return [f"{repo}: tool files can't be built: {exc}"]
+    return [str(line) for line in drift]
+
+
 def build_adapters(repo: Path) -> None:
     """E12: run the installed kit's adapter build. A failure warns; the install still succeeds."""
     module = load_kit_module(repo / ".factory/adapters/build.py", "factory_target_build")
     if module is None:
         return
     try:
-        module.write(repo)
+        with no_bytecode():
+            module.write(repo)
     except module.BuildError as exc:
         print(f"{repo}: tool files not built: {exc}", file=sys.stderr)
 
