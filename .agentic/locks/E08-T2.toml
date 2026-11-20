@@ -1,0 +1,6 @@
+task = "E08-T2"
+locked = 2026-11-20T21:03:26Z
+
+[[files]]
+path = "tests/test_evidence_draft.py"
+sha256 = "8d6186caac398f5fa159909f9fe493f67ac6d7befb71adba4f16ee0d1d803f1b"
