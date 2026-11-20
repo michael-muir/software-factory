@@ -1,7 +1,7 @@
 +++
 phase = "test"
 track = "full"
-active_task = "E16-T1"
+active_task = "E08-T1"
 blockers = []
 updated = 2026-11-20T02:55:06Z
 +++
