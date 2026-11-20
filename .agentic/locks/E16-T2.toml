@@ -1,0 +1,14 @@
+task = "E16-T2"
+locked = 2026-11-20T04:46:56Z
+
+[[files]]
+path = "tests/_daemon.py"
+sha256 = "6134107dd5d38c4a1ce788299ad8db8af190c999b8c3d18c64c7dea18d5b61ca"
+
+[[files]]
+path = "tests/test_runner_daemon.py"
+sha256 = "2f7c2d6c65f4d1c48b2b6954cde7aafe6adec25d305bdef18faaf1e8ed911dad"
+
+[[files]]
+path = "tests/test_runner_daemons.py"
+sha256 = "ac2bd1ee3202df35627a780ed86a49524f0660acda6bb925147f622b7dcd1cde"
