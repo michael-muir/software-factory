@@ -107,8 +107,8 @@ def test_an_edited_source_makes_its_files_stale(
     assert sorted(drift(lines, "stale")) == [
         ".claude/skills/handoff/SKILL.md",
         ".cursor/skills/handoff/SKILL.md",
-        ".github/skills/handoff/SKILL.md",
         MANIFEST,
+        ".github/skills/handoff/SKILL.md",
     ]
 
 
