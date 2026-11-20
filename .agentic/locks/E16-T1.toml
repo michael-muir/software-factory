@@ -1,0 +1,14 @@
+task = "E16-T1"
+locked = 2026-11-20T02:57:35Z
+
+[[files]]
+path = "tests/test_runner_cli.py"
+sha256 = "6130a536e1beafb7fa3ce78bdb36278fb39f93fa70249f03a8e266541259813a"
+
+[[files]]
+path = "tests/test_runner_config.py"
+sha256 = "b4b6d39cb1b073a1fc56136a4e1fa9fc3d3376f39e4364006533331f112ab211"
+
+[[files]]
+path = "tests/_runner.py"
+sha256 = "a01ed380f1b41631f67f04722c5ac415ea54f306fdef6e01a10edebf275d5b27"

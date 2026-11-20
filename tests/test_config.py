@@ -32,6 +32,12 @@ SPEC_DEFAULTS = {
     },
     "models": {"cross_model_vendor": "openai"},
     "adapters": {"tools": ["claude-code", "copilot", "cursor"]},
+    "runner": {
+        "max_turns": 50,
+        "job_timeout_minutes": 120,
+        "max_parallel": 2,
+        "worktree_root": "",
+    },
     "telemetry": {"enabled": False},
 }
 
