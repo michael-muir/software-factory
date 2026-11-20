@@ -7,7 +7,7 @@
     ".factory/adapters/build.py": "44fcc0b8c8c7a533a586441f6d59a8c384e0d59069190b9f24a49bd82a55d7a1",
     ".factory/agents/_schema.md": "24d79617722290fcd2d1a4572330028a077e01e982dfc59ec88270dc8517162e",
     ".factory/agents/_template.md": "78747451ba7bc74a761d472082927905dfe4e1e0ca57a6e0f60fb345f77358ff",
-    ".factory/agents/agents.py": "415df816c47a79a669e9cbd17d395076e11c5df19f0d633ce6eb43b3e24eaa20",
+    ".factory/agents/agents.py": "61dd12718a3110aabb9a528f1e70a2e874e40eefd764be6d9f23b99eb06a18a2",
     ".factory/agents/claude-hook": "ab4eae1b4ee119292eacb584ea60245914b5d892fd46e096320817393bb25232",
     ".factory/agents/copilot-hook": "e09d8571fa14d53539e7a358de18ca1429c272e92a9684329848e7994a0097aa",
     ".factory/agents/core/adversary.md": "0a96b3d374bedde31c431746865adb9c421b286f92b4162003f9eef4b1525b8c",

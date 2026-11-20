@@ -806,8 +806,14 @@ def _hook_decision(kind: str, payload: Mapping[str, object], env: Mapping[str, s
 
 
 def _answer(kind: str, decision: Decision) -> int:
-    """Allow: exit 0, no output. Deny: exit 2, which all three tools honour, in the tool's form."""
+    """Allow: exit 0. Deny: exit 2, which all three tools honour, in the tool's form.
+
+    Cursor's permission hooks must answer exit 0 with JSON: with failClosed, "no output" blocks
+    the call. So Cursor's allow prints {"permission": "allow"}; the others print nothing.
+    """
     if decision.allowed:
+        if kind == "cursor":
+            print(json.dumps({"permission": "allow"}))
         return 0
     reason = f"factory hook: blocked: {decision.reason}"
     if kind == "copilot":
