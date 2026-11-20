@@ -26,6 +26,7 @@ from tests._gate import PASS, gate_repo, profile, run_gate, touches
 from tests._repo import git_repo
 from tests.test_adapters_build import CLAUDE, COPILOT, front, repo_with
 from tests.test_adapters_hooks import (
+    CURSOR_ALLOW,
     claude,
     copilot,
     copilot_denied,
@@ -471,7 +472,7 @@ def test_done_when_an_in_list_call_is_allowed_by_all_three_hooks(
     as_copilot = {**copilot(root, "view", path="src/app.py"), "agentType": ONE_ROLE}
     assert run_hook(monkeypatch, capsys, "copilot", as_copilot) == (0, "", "")
     as_cursor = cursor(root, "Read", file_path="src/app.py")
-    assert run_hook(monkeypatch, capsys, "cursor", as_cursor, ONE_ROLE) == (0, "", "")
+    assert run_hook(monkeypatch, capsys, "cursor", as_cursor, ONE_ROLE) == (0, CURSOR_ALLOW, "")
 
 
 def config_command(root: Path, tool: str) -> list[str]:
@@ -533,7 +534,7 @@ def test_done_when_each_generated_hook_config_runs_and_answers(tmp_path: Path, t
     else:
         assert f"{ONE_ROLE} may not use run" in no.stderr
     yes = run(allowed_call)
-    assert (yes.returncode, yes.stdout) == (0, ""), yes
+    assert (yes.returncode, yes.stdout) == (0, CURSOR_ALLOW if tool == "cursor" else ""), yes
 
 
 # --- AC-12: dogfooding and quality --------------------------------------------------------------
