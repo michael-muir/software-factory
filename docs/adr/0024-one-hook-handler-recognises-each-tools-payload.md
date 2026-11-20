@@ -24,7 +24,7 @@ Tools also read each other's configuration. VS Code's Copilot reads `.claude/set
   - `workspace_roots` or `conversation_id` means Cursor
   - anything else means Claude Code
 - **It maps the tool name with that tool's table,** reads that tool's path and agent fields, resolves the role, and calls E03's `allow`.
-- **It answers in that tool's protocol,** and always exits 2 on a deny, which every one of the three treats as a deny. An allow is exit 0, with no output.
+- **It answers in that tool's protocol,** and always exits 2 on a deny, which every one of the three treats as a deny. An allow is exit 0, with no output, except in Cursor, whose permission hooks must answer with JSON: there an allow prints `{"permission": "allow"}` (amended 20 Nov 2026, after the Cursor CLI live check).
 - **It fails closed in every case it controls:**
   - every error takes the deny path
   - Cursor's hook is registered with `failClosed: true`

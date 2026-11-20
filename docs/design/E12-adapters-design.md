@@ -128,7 +128,7 @@ A write with no path is blocked.
 | --- | --- | --- |
 | Claude Code | exit 0, no output | exit 2, reason on stderr (E03) |
 | Copilot | exit 0, no output | `{"permissionDecision": "deny", "permissionDecisionReason": ...}` on stdout, exit 2 |
-| Cursor | exit 0, no output | `{"permission": "deny", "user_message": ..., "agent_message": ...}` on stdout, exit 2 |
+| Cursor | exit 0, `{"permission": "allow"}` on stdout (amended 20 Nov 2026: with `failClosed`, Cursor blocks on no output) | `{"permission": "deny", "user_message": ..., "agent_message": ...}` on stdout, exit 2 |
 
 Exit 2 denies in all three tools, so a deny is honoured even if the JSON is misread. Every error goes through the deny path, as in E03.
 
