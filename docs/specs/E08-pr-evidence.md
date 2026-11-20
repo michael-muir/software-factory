@@ -1,7 +1,7 @@
 # E08 · PR evidence — Spec
 
 Issue: [#8](https://github.com/michael-muir/software-factory/issues/8) · Milestone: M1 · Manual factory (alpha) · Depends on: E04 (done), E05 (done)
-Status: **Draft, awaiting product owner approval** · Next: Architect design note and ADRs, then failing tests per AC
+Status: **Approved by the product owner, 19 Nov 2026** · Next: Architect design note and ADRs, then failing tests per AC
 
 ## Goal
 
@@ -94,7 +94,7 @@ E04 defined the shape of PR evidence and a check for its headings. E05 gave the 
 - **AC-19** **Live:** this repo's workflow is re-rendered and committed. On E08's PRs, `pr-evidence` passes, and each gate job's artefact and summary are on the run. The PR links to them.
 - **AC-20** ruff, `ruff format --check` and `mypy --strict` pass. `evidence.py` is standard library only. The kit layout tests list the new kit files. Every AC above has at least one test tagged `E08-AC-nn`, except AC-17 and AC-19.
 
-## Assumptions (to confirm with approval)
+## Assumptions (confirmed with approval, 19 Nov 2026)
 
 1. **`--strict` is a new option, so E04's locked tests stay locked.** E04-T3's locked tests pin today's `check-pr`: a body with no commit passes, and so does the template. A strict default would need those tests relocked. The skill and CI always pass `--strict`.
 2. **E10-T3 needs one relock, at the test commit, with the product owner's approval.** Its locked `tests/test_skills_prove.py` pins exactly 16 kit skills and names `pull-request-evidence` as the one exception. The relock adds the skill to the set, empties the exception and adds its exercise record. Nothing else in the file changes.
