@@ -34,7 +34,7 @@ The kit's `.factory/adapters/.gitkeep` goes.
 
 | Tool | Path | Front matter |
 | --- | --- | --- |
-| Claude Code | `.claude/agents/<name>.md` | `name`, `description`, `tools: "Read, Glob, Grep, Bash"` |
+| Claude Code | `.claude/agents/<name>.md` | `name`, `description`, `tools: "Read, Glob, Grep, Bash, PowerShell"` |
 | Copilot | `.github/agents/<name>.agent.md` | `name`, `description`, `tools: ["read", "search", "execute"]` |
 | Cursor | `.cursor/agents/<name>.md` | `name`, `description` |
 
@@ -79,11 +79,11 @@ git -c 'alias.factory-hook=!sh .factory/agents/<launcher>' factory-hook; exit $L
 
 **Claude Code's PowerShell tool (amended 20 Nov 2026, after the live check failed on Windows).** On Windows, Claude Code has a `PowerShell` tool, which it treats as the primary shell once it's on. Its hooks docs use the matcher `Bash|PowerShell`, and give the tool Bash's input fields, with the command in `tool_input.command`. The factory's matcher listed only Bash, so a PowerShell call skipped the hook. In the product owner's live check, `ls` ran under the verifier role.
 
-- `CLAUDE_CODE_TOOLS` maps `PowerShell` to `run`, and the generated matcher includes it. Agent files still list only `Bash`: a subagent with that list doesn't get the PowerShell tool.
+- `CLAUDE_CODE_TOOLS` maps `PowerShell` to `run`, and the generated matcher includes it. A subagent's `tools` is an allowlist, so a role with `run` lists both `Bash` and `PowerShell` in its agent file (product owner, 20 Nov 2026). Without `PowerShell` there, a role couldn't use Windows' primary shell; with it, the hook holds both to the same scope.
 - The shell control check covers PowerShell syntax as well as sh's. PowerShell evaluates `(...)`, `$var`, `$x.Method()` and `@(...)` inside a native command's arguments, so `$`, `(`, `)` and `@` at the start of a word are control text. So is a line break of any kind. Copilot's `powershell` tool and Cursor's `Shell` on Windows go through the same check.
 - A subagent's calls carry `agent_id` and `agent_type`, and the hook already reads `agent_type`. A call the main session makes has no `agent_type`, so only `FACTORY_ROLE` and locks apply to it.
 
-`tests/test_adapters_powershell.py` covers these, with the docs' payload shape.
+`tests/test_adapters_powershell.py` covers these, with the docs' payload shape, and `tests/test_adapters_powershell_agents.py` covers the agent files.
 
 **Writing:** JSON is written with `indent=2`, LF line endings and a final newline. Front matter keys are always in the same order. Files are written atomically (`state.write`).
 

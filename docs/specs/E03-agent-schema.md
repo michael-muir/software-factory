@@ -68,7 +68,7 @@ run = ["uv run pytest", "python .factory/gates/gate.py"]   # command prefixes; d
 | `search` | find files or text | Glob, Grep |
 | `edit` | change an existing file | Edit, MultiEdit, NotebookEdit |
 | `write` | create or replace a file | Write |
-| `run` | run a shell command | Bash, PowerShell (hook only) |
+| `run` | run a shell command | Bash, PowerShell |
 | `web` | fetch or search the web | WebFetch, WebSearch |
 
 **`.agentic/locks/<task>.toml`**, written by `agents.py lock`:
@@ -137,4 +137,4 @@ sha256 = "…"                      # of the LF-normalised content (ADR 0004)
 
 ## Changes
 
-- **20 Nov 2026, approved by the product owner (E12 PR #68):** the Claude Code hook maps the `PowerShell` tool, Claude Code's shell on Windows, to `run`, as it maps `Bash`. Agent files still list `Bash` only. A `run` scope's shell control check also treats PowerShell syntax as control: `$`, `(`, `)`, `@` at the start of a word, and line or paragraph separators, beside `;`, `&`, `|`, `` ` ``, `>`, `<` and newlines.
+- **20 Nov 2026, approved by the product owner (E12 PR #68):** the Claude Code hook maps the `PowerShell` tool, Claude Code's shell on Windows, to `run`, as it maps `Bash`. E12's Claude Code agent files list both for a role with `run`. A `run` scope's shell control check also treats PowerShell syntax as control: `$`, `(`, `)`, `@` at the start of a word, and line or paragraph separators, beside `;`, `&`, `|`, `` ` ``, `>`, `<` and newlines.

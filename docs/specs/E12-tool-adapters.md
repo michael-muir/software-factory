@@ -52,10 +52,10 @@ The factory's roles and skills are written once, in the neutral formats of E03 a
 | `search` | Glob, Grep | `search` | `glob`, `grep` | `Grep` |
 | `edit` | Edit, MultiEdit, NotebookEdit | `edit` | `edit` | `Write` (Cursor matches edits as writes) |
 | `write` | Write | `edit` | `create` | `Write` |
-| `run` | Bash (hook: Bash, PowerShell) | `execute` | `bash`, `powershell` | `Shell` |
+| `run` | Bash, PowerShell | `execute` | `bash`, `powershell` | `Shell` |
 | `web` | WebFetch, WebSearch | `web` | `web_fetch` | none documented |
 
-Claude Code's hook sees the same names as its agent `tools`, plus `PowerShell`, its Windows shell tool. So the generated `PreToolUse` matcher covers `Bash|PowerShell`. Agent files still list `Bash` only (change of 20 Nov 2026, below).
+Claude Code's hook sees the same names as its agent `tools`. `PowerShell` is its shell tool on Windows, so the generated `PreToolUse` matcher covers `Bash|PowerShell` (change of 20 Nov 2026, below).
 
 **Who is the role**, per tool (E03's ADR 0017 order):
 - **Claude Code:** `agent_type`, then `FACTORY_ROLE`. A subagent's calls carry `agent_id` and `agent_type`, its name, which comes before the session's own `--agent`.
@@ -110,4 +110,4 @@ Claude Code's hook sees the same names as its agent `tools`, plus `PowerShell`, 
 
 ## Changes
 
-- **20 Nov 2026, approved by the product owner after the AC-11 live check failed on Windows:** Claude Code's `PowerShell` tool maps to `run`, and the generated `PreToolUse` matcher includes it. Claude Code's hooks docs (code.claude.com/docs/en/hooks) use the matcher `Bash|PowerShell`, and give the tool the same input fields as Bash, with the command in `tool_input.command`. Before this change, a PowerShell call skipped the hook, so a role could run any command. E03's shell control check also covers PowerShell syntax now. This was task E12-T4, and it ships in the same PR as E12-T3.
+- **20 Nov 2026, approved by the product owner after the AC-11 live check failed on Windows:** Claude Code's `PowerShell` tool maps to `run`, and the generated `PreToolUse` matcher includes it. Claude Code's hooks docs (code.claude.com/docs/en/hooks) use the matcher `Bash|PowerShell`, and give the tool the same input fields as Bash, with the command in `tool_input.command`. Before this change, a PowerShell call skipped the hook, so a role could run any command. E03's shell control check also covers PowerShell syntax now. A role with `run` lists both `Bash` and `PowerShell` in its Claude Code agent file, because Claude Code treats PowerShell as the primary shell on Windows once the tool is on (product owner, the same day). The hook holds both to the same `run` scope. This was task E12-T4, and it ships in the same PR as E12-T3.
