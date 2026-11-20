@@ -73,7 +73,7 @@ git -c 'alias.factory-hook=!sh .factory/agents/<launcher>' factory-hook; exit $L
 - **The quoting works in every shell.** The single quotes are literal in sh, bash, PowerShell 5.1 and pwsh 7, and there's no double quote for PowerShell 5.1 to mangle on its way to git.
 - **The exit code is kept.** `exit $LASTEXITCODE` keeps the exit code 2 that blocks a call, which `powershell -Command` would turn into 1. In sh it's a bare `exit`, which keeps git's code.
 - **Copilot's `bash` command is unchanged,** because its cloud agent runs only `bash`, on Linux.
-- **`agents.py hook` reads stdin as raw UTF-8 bytes and drops a leading byte order mark,** which PowerShell adds when Cursor pipes the payload on Windows.
+- **`agents.py hook` reads stdin as raw UTF-8 bytes and drops leading byte order marks,** which PowerShell adds when Cursor pipes the payload on Windows. Windows PowerShell 5.1 adds two, as CI showed.
 
 `tests/test_adapters_shells.py` runs every registered command through sh, bash, `powershell` and `pwsh` wherever they're installed, on CI's three OSes. It also runs them through Cursor's PowerShell wrapper, with a PATH that has git but no sh, and with a byte order mark.
 

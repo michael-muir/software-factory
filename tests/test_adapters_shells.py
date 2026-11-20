@@ -256,8 +256,9 @@ def test_a_payload_with_a_byte_order_mark_is_read(repo: Path, kind: str) -> None
     tool = kind
     agents = repo / ".factory" / "agents" / "agents.py"
     env = environment(tool)
-    for call, denied in (("ls", True), ("git status", False)):
-        data = b"\xef\xbb\xbf" + json.dumps(payload(tool, repo, call)).encode()
+    for call, denied, marks in (("ls", True, 1), ("git status", False, 1), ("ls", True, 2)):
+        # Windows PowerShell 5.1 sends two marks through Cursor's wrapper (seen on CI)
+        data = b"\xef\xbb\xbf" * marks + json.dumps(payload(tool, repo, call)).encode()
         result = run([sys.executable, str(agents), "hook", kind], repo, data, env)
         if denied:
             assert_denied(tool, result)
