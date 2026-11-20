@@ -31,10 +31,10 @@ A role can use only the tools it lists. The hook (E03/T3) blocks every other cal
 
 ## Scope keys
 
-| Key     | Narrows            | Rule                                                                                                                                                                                                                                                      |
-| ------- | ------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `write` | `edit` and `write` | A non-empty list of repo-relative globs using `/`. `*` matches within one path segment, and `**` matches any depth. No absolute paths, `\` or `..`. The role must list `edit` or `write`. When `write` is unset, the role can write anywhere in the repo. |
-| `run`   | `run`              | A non-empty list of command prefixes, matched on whole words. When it's set, commands that contain shell control characters (`;`, `&`, `\|`, `` ` ``, `$(`, `>`, `<`, a newline) are blocked. The role must list `run`.                                   |
+| Key     | Narrows            | Rule                                                                                                                                                                                                                                                                                 |
+| ------- | ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `write` | `edit` and `write` | A non-empty list of repo-relative globs using `/`. `*` matches within one path segment, and `**` matches any depth. No absolute paths, `\` or `..`. The role must list `edit` or `write`. When `write` is unset, the role can write anywhere in the repo.                            |
+| `run`   | `run`              | A non-empty list of command prefixes, matched on whole words. When it's set, commands that contain shell control characters (`;`, `&`, `\|`, `` ` ``, `$`, `(`, `)`, `>`, `<`, `@` starting a word, a line break) are blocked, in sh and PowerShell alike. The role must list `run`. |
 
 Locked test files (`.agentic/locks/`) can't be edited or written by any role, whatever its scope.
 

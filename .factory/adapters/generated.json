@@ -16,7 +16,7 @@
     ".claude/agents/standards-reviewer.md": "ead67e9a4eb1d1b6273147e5a748917c003e94f1fd0ab2e799813f6ccb094918",
     ".claude/agents/test-designer.md": "c7d2343cc486113220588664790659ebe218c583c9f64a72c752424014598990",
     ".claude/agents/verifier.md": "b227ed74b63f929df6b371f186e0ad7bd7e4d0b993e1ddaf3ec2009663256224",
-    ".claude/settings.json": "1302c7f3ea6006976be61d444e347f534daa6d53f414623f4629fbdea154fc8b",
+    ".claude/settings.json": "e2e64532bf2ba907b192e5686a91dde0cf3826165e262bf274fbe6ca72b3934e",
     ".claude/skills/adversarial-testing/SKILL.md": "8056e0a692392c93adcbfbadd22e47adb22d5acc56c4b91004789b4512f608f8",
     ".claude/skills/debugging/SKILL.md": "e8a1b68c1a1eff040d1ad9bec9bc9818e76dbc1ba136f51c9120d1a541452001",
     ".claude/skills/dependency-bump/SKILL.md": "740d965d9636342d68ce8eee18596a613ca493111a88f25c1f9669a5bee6f616",

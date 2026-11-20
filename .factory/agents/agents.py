@@ -27,6 +27,7 @@ import re
 import shlex
 import sys
 import tomllib
+import unicodedata
 from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
@@ -65,7 +66,18 @@ SCOPE_NEEDS = {"write": ("edit", "write"), "run": ("run",)}
 AGENT_HEADINGS = ("## Scope", "## Inputs", "## Outputs")
 ROLE_NAME = re.compile(r"[a-z0-9-]+", re.ASCII)
 SHA256 = re.compile(r"[0-9a-f]{64}")
-SHELL_CONTROL = (";", "&", "|", "`", "$(", ">", "<", "\n", "\r")
+# Text that chains, substitutes or redirects a command in sh, bash or PowerShell. PowerShell also
+# evaluates `(...)`, `$var` and `$x.Method()` inside a command's arguments, and `@name` or `@(...)`
+# at the start of one. Line breaks of any kind (control characters, U+2028, U+2029) count too.
+SHELL_CONTROL = (";", "&", "|", "`", "$", "(", ")", ">", "<", "\n", "\r")
+SPLAT = re.compile(r"(?<!\S)@")
+
+
+def shell_control(command: str) -> bool:
+    """Does `command` hold text a POSIX shell or PowerShell reads as more than one plain command?"""
+    if any(mark in command for mark in SHELL_CONTROL) or SPLAT.search(command):
+        return True
+    return any(unicodedata.category(c) in ("Cc", "Zl", "Zp") for c in command if c != "\t")
 
 
 class Refused(Exception):
@@ -587,7 +599,7 @@ def _decide(
             return Decision(False, f"{who} may only write {', '.join(globs)}, not {rel}")
     if tool == "run" and command is not None and scope.get("run"):
         prefixes = scope["run"]
-        if any(mark in command for mark in SHELL_CONTROL):
+        if shell_control(command):
             return Decision(False, f"{who} may not run commands with shell control characters")
         try:
             words = shlex.split(command)
@@ -618,6 +630,7 @@ CLAUDE_CODE_TOOLS = {
     "NotebookEdit": "edit",
     "Write": "write",
     "Bash": "run",
+    "PowerShell": "run",  # Windows; the docs' matcher is Bash|PowerShell
     "WebFetch": "web",
     "WebSearch": "web",
 }
