@@ -1,6 +1,6 @@
 # 0032 · A job is a worktree and a stream of commands, driven by one polling loop that enforces the caps
 
-Status: Proposed · Date: 2026-11-19 · Epic: E16
+Status: Accepted · Date: 2026-11-19 · Epic: E16
 
 ## Context
 

@@ -1,6 +1,6 @@
 # 0031 · A halt kills the command's session on POSIX and its Job Object on Windows
 
-Status: Proposed · Date: 2026-11-19 · Epic: E16
+Status: Accepted · Date: 2026-11-19 · Epic: E16
 
 ## Context
 

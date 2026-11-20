@@ -1,6 +1,6 @@
 # 0030 · Runner state is files in the git common directory, claimed by atomic file operations
 
-Status: Proposed · Date: 2026-11-19 · Epic: E16
+Status: Accepted · Date: 2026-11-19 · Epic: E16
 
 ## Context
 

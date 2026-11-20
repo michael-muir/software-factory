@@ -1,7 +1,7 @@
 # E16 · Machine daemon and worktrees design note
 
 Spec: [E16 spec](../specs/E16-machine-daemon-worktrees.md) · Issue: [#16](https://github.com/michael-muir/software-factory/issues/16)
-Status: **Proposed, awaiting product owner acceptance** · ADRs: [0030](../adr/0030-runner-state-is-files-in-the-git-common-directory-claimed-by-atomic-operations.md) · [0031](../adr/0031-a-halt-kills-the-commands-session-on-posix-and-its-job-object-on-windows.md) · [0032](../adr/0032-a-job-is-a-worktree-and-a-stream-of-commands-driven-by-one-polling-loop.md)
+Status: **Accepted by the product owner, 19 Nov 2026** · ADRs: [0030](../adr/0030-runner-state-is-files-in-the-git-common-directory-claimed-by-atomic-operations.md) · [0031](../adr/0031-a-halt-kills-the-commands-session-on-posix-and-its-job-object-on-windows.md) · [0032](../adr/0032-a-job-is-a-worktree-and-a-stream-of-commands-driven-by-one-polling-loop.md)
 
 ## Summary
 
