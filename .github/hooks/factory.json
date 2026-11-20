@@ -5,7 +5,7 @@
       {
         "type": "command",
         "bash": "sh .factory/agents/copilot-hook",
-        "powershell": "python .factory/agents/agents.py hook copilot",
+        "powershell": "git -c 'alias.factory-hook=!sh .factory/agents/copilot-hook' factory-hook; exit $LASTEXITCODE",
         "timeoutSec": 10
       }
     ]

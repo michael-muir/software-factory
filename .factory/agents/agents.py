@@ -806,11 +806,16 @@ def _answer(kind: str, decision: Decision) -> int:
     return 2
 
 
-def hook(entry: str, stdin: str, env: Mapping[str, str]) -> int:
-    """Judge one tool call. The payload's shape picks the tool; `entry` answers if it can't."""
+def hook(entry: str, stdin: str | bytes, env: Mapping[str, str]) -> int:
+    """Judge one tool call. The payload's shape picks the tool; `entry` answers if it can't.
+
+    Raw stdin is read as UTF-8 whatever the locale, and a leading byte order mark is dropped:
+    Cursor on Windows pipes the payload through PowerShell, which adds one.
+    """
     kind = entry
     try:
-        payload = json.loads(stdin)
+        text = stdin.decode("utf-8") if isinstance(stdin, bytes) else stdin
+        payload = json.loads(text.removeprefix("\ufeff"))
         if not isinstance(payload, dict):
             raise Unusable("hook input must be a JSON object")
         kind = recognise(payload) or entry
@@ -859,7 +864,8 @@ def _allow(root: Path, args: argparse.Namespace) -> int:
 
 
 def _hook(root: Path, args: argparse.Namespace) -> int:
-    return hook(args.tool, sys.stdin.read(), os.environ)
+    raw = getattr(sys.stdin, "buffer", None)  # bytes, not the locale's decoding of them
+    return hook(args.tool, sys.stdin.read() if raw is None else raw.read(), os.environ)
 
 
 def _parser() -> argparse.ArgumentParser:

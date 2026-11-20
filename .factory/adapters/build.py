@@ -40,13 +40,32 @@ NOTICE = (
 CLAUDE_SETTINGS_REL = ".claude/settings.json"
 COPILOT_HOOKS_REL = ".github/hooks/factory.json"
 CURSOR_HOOKS_REL = ".cursor/hooks.json"
+
+
+def hook_command(launcher: str) -> str:
+    """A hook command that runs the sh `launcher` alike from sh, bash, PowerShell 5.1 and pwsh.
+
+    The commands in `.claude/settings.json` and `.cursor/hooks.json` are shared by shells: Claude
+    Code runs them with sh or Git Bash, Cursor on Windows with PowerShell, and Copilot CLI, which
+    reads `.claude/settings.json` too, with PowerShell on Windows and without $CLAUDE_PROJECT_DIR.
+    So the command needs no sh on PATH and no variable: git runs a `!` alias with its own sh
+    (Git for Windows brings one), from the top of the repo it is started in, with stdin passed
+    through. The single quotes are literal in every one of those shells, and there's no double
+    quote for PowerShell 5.1 to mangle on its way to git. `exit $LASTEXITCODE` keeps the exit
+    code 2 that blocks a call, which PowerShell would turn into 1; sh reads it as a bare `exit`,
+    which keeps git's.
+    """
+    alias = f"alias.factory-hook=!sh .factory/agents/{launcher}"
+    return f"git -c '{alias}' factory-hook; exit $LASTEXITCODE"
+
+
 COPILOT_ENTRY = {
     "type": "command",
     "bash": "sh .factory/agents/copilot-hook",  # the only form Copilot's cloud agent runs
-    "powershell": "python .factory/agents/agents.py hook copilot",
+    "powershell": hook_command("copilot-hook"),
     "timeoutSec": 10,
 }
-CURSOR_ENTRY = {"command": "sh .factory/agents/cursor-hook", "timeout": 10, "failClosed": True}
+CURSOR_ENTRY = {"command": hook_command("cursor-hook"), "timeout": 10, "failClosed": True}
 # Configs shared with a repo's own settings: {path: (hook event, the launcher that marks ours)}
 SHARED = {
     CLAUDE_SETTINGS_REL: ("PreToolUse", "claude-hook"),
@@ -129,7 +148,7 @@ def _json(data: object) -> bytes:
 
 def _claude_entry(agents: ModuleType) -> dict[str, object]:
     """E03's PreToolUse entry (ADR 0017): every mapped tool, blocking on failure."""
-    command = 'sh "$CLAUDE_PROJECT_DIR/.factory/agents/claude-hook"'
+    command = hook_command("claude-hook")
     return {
         "matcher": "|".join(agents.CLAUDE_CODE_TOOLS),
         "hooks": [{"type": "command", "command": command, "timeout": 10, "onFailure": "block"}],

@@ -43,19 +43,39 @@ The tool tables are the spec's, held as data in `agents.py` (`CLAUDE_CODE_TOOLS`
 **Skills:** every file in `.factory/skills/<name>/` is copied byte for byte to `<tool skills folder>/<name>/`. Skill files carry no notice, because their bytes must match the source.
 
 **Hooks:**
-- **`.claude/settings.json`:** the existing JSON is loaded. Any `PreToolUse` entry whose command names `.factory/agents/claude-hook` is replaced by the generated one, with the same content E03's locked test pins. Every other key and entry is kept, in order.
+- **`.claude/settings.json`:** the existing JSON is loaded. Any `PreToolUse` entry whose command names `.factory/agents/claude-hook` is replaced by the generated one. Every other key and entry is kept, in order.
 - **`.github/hooks/factory.json`:**
   - `version` 1
   - one `preToolUse` command
   - `bash`: `sh .factory/agents/copilot-hook`
-  - `powershell`: `python .factory/agents/agents.py hook copilot`
+  - `powershell`: the shell-neutral command below, for `copilot-hook`
   - `timeoutSec` 10
 - **`.cursor/hooks.json`:**
   - `version` 1
   - an existing file's other entries are kept, as for Claude Code
-  - one `preToolUse` command: `sh .factory/agents/cursor-hook`
+  - one `preToolUse` command: the shell-neutral command below, for `cursor-hook`
   - `timeout` 10
   - `failClosed: true`
+
+**One command for every shell (amended 20 Nov 2026, before the live check).** A hook command can be run by more than one shell:
+
+- Claude Code runs `.claude/settings.json` with `sh -c`, with Git Bash on Windows, or with PowerShell when Git Bash isn't installed.
+- Copilot CLI also reads `.claude/settings.json`. It runs hook commands with PowerShell on Windows, and it doesn't set `$CLAUDE_PROJECT_DIR`.
+- Cursor runs commands with PowerShell on Windows. It also imports `.claude/settings.json` by default.
+
+So the first commands (`sh "$CLAUDE_PROJECT_DIR/..."`, `sh .factory/agents/cursor-hook`, and `python ...` for Copilot) blocked every call where sh wasn't on PATH or the variable wasn't set. `python` could also be the Windows Store stub or an old Python. Each of these hooks now runs:
+
+```
+git -c 'alias.factory-hook=!sh .factory/agents/<launcher>' factory-hook; exit $LASTEXITCODE
+```
+
+- **git runs a `!` alias with its own sh,** which Git for Windows brings, from the top of the repo it's started in, and passes stdin through. So no sh on PATH is needed, no variable, and no exec bit. A hook started in a subfolder still finds the launcher. The sh launcher then finds Python 3.11+, skipping the Store stub, as before.
+- **The quoting works in every shell.** The single quotes are literal in sh, bash, PowerShell 5.1 and pwsh 7, and there's no double quote for PowerShell 5.1 to mangle on its way to git.
+- **The exit code is kept.** `exit $LASTEXITCODE` keeps the exit code 2 that blocks a call, which `powershell -Command` would turn into 1. In sh it's a bare `exit`, which keeps git's code.
+- **Copilot's `bash` command is unchanged,** because its cloud agent runs only `bash`, on Linux.
+- **`agents.py hook` reads stdin as raw UTF-8 bytes and drops a leading byte order mark,** which PowerShell adds when Cursor pipes the payload on Windows.
+
+`tests/test_adapters_shells.py` runs every registered command through sh, bash, `powershell` and `pwsh` wherever they're installed, on CI's three OSes. It also runs them through Cursor's PowerShell wrapper, with a PATH that has git but no sh, and with a byte order mark.
 
 **Writing:** JSON is written with `indent=2`, LF line endings and a final newline. Front matter keys are always in the same order. Files are written atomically (`state.write`).
 

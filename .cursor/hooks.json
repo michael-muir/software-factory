@@ -3,7 +3,7 @@
   "hooks": {
     "preToolUse": [
       {
-        "command": "sh .factory/agents/cursor-hook",
+        "command": "git -c 'alias.factory-hook=!sh .factory/agents/cursor-hook' factory-hook; exit $LASTEXITCODE",
         "timeout": 10,
         "failClosed": true
       }

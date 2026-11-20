@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "sh \"$CLAUDE_PROJECT_DIR/.factory/agents/claude-hook\"",
+            "command": "git -c 'alias.factory-hook=!sh .factory/agents/claude-hook' factory-hook; exit $LASTEXITCODE",
             "timeout": 10,
             "onFailure": "block"
           }
