@@ -42,6 +42,8 @@ KIT_FILES = frozenset(
         ".factory/agents/core/test-designer.md",
         ".factory/agents/core/verifier.md",
         ".factory/agents/claude-hook",
+        ".factory/agents/copilot-hook",
+        ".factory/agents/cursor-hook",
         ".factory/skills/adversarial-testing/SKILL.md",
         ".factory/skills/debugging/SKILL.md",
         ".factory/skills/dependency-bump/SKILL.md",

@@ -666,62 +666,163 @@ def role_cards(root: Path) -> list[RoleCard]:
     return sorted(cards, key=lambda card: card.name)
 
 
+# --- the hooks: one handler for Claude Code, Copilot and Cursor (ADR 0017, ADR 0024) -------------
+
+HOOK_ENTRIES = ("claude-code", "copilot", "cursor")
+COPILOT_HOOK_TOOLS = {
+    "view": "read",
+    "glob": "search",
+    "grep": "search",
+    "edit": "edit",
+    "create": "write",
+    "bash": "run",
+    "powershell": "run",
+    "web_fetch": "web",
+}
+CURSOR_HOOK_TOOLS = {  # Cursor matches edits as Write; Delete counts as a write
+    "Read": "read",
+    "Grep": "search",
+    "Write": "write",
+    "Delete": "write",
+    "Shell": "run",
+}
+HOOK_TABLES = {
+    "claude-code": CLAUDE_CODE_TOOLS,
+    "copilot": COPILOT_HOOK_TOOLS,
+    "cursor": CURSOR_HOOK_TOOLS,
+}
 CLAUDE_CODE_PATHS = {
     "Edit": "file_path",
     "MultiEdit": "file_path",
     "Write": "file_path",
     "NotebookEdit": "notebook_path",
 }
+HOOK_PATH_KEYS = {"copilot": ("path",), "cursor": ("file_path", "path")}
+HOOK_AGENT_FIELDS = {
+    "claude-code": ("agent_type",),
+    "copilot": ("agentType", "agent_type"),
+    "cursor": (),  # Cursor's payload names no agent: FACTORY_ROLE only
+}
 
 
-def _claude_code_decision(payload: object, env: Mapping[str, str]) -> Decision:
-    if not isinstance(payload, dict):
-        raise Unusable("hook input must be a JSON object")
-    name, tool_input = payload.get("tool_name"), payload.get("tool_input")
-    if not isinstance(name, str) or not isinstance(tool_input, dict):
-        raise Unusable("hook input needs tool_name and tool_input")
+def recognise(payload: Mapping[str, object]) -> str | None:
+    """Which tool sent a hook payload, by its shape (ADR 0024); None if it's none of them."""
+    if "toolName" in payload:
+        return "copilot"
+    name = payload.get("tool_name")
+    if payload.get("hook_event_name") == "PreToolUse" and name in COPILOT_HOOK_TOOLS:
+        return "copilot"  # VS Code's form of Copilot's payload
+    if "workspace_roots" in payload or "conversation_id" in payload:
+        return "cursor"
+    if "tool_name" in payload:
+        return "claude-code"
+    return None
+
+
+def _hook_start(payload: Mapping[str, object]) -> Path:
     cwd = payload.get("cwd")
-    start = Path(cwd) if isinstance(cwd, str) and cwd else Path.cwd()
+    if isinstance(cwd, str) and cwd:
+        return Path(cwd)
+    roots = payload.get("workspace_roots")
+    if isinstance(roots, list) and roots and isinstance(roots[0], str) and roots[0]:
+        return Path(roots[0])
+    return Path.cwd()
+
+
+def _hook_call(payload: Mapping[str, object]) -> tuple[str, dict[str, Any]]:
+    """The tool name the payload calls, and its arguments."""
+    if "toolName" in payload:
+        name, args = payload.get("toolName"), payload.get("toolArgs")
+        if isinstance(args, str):
+            try:
+                args = json.loads(args)
+            except json.JSONDecodeError as exc:
+                raise Unusable(f"toolArgs is not JSON: {exc}") from None
+    else:
+        name, args = payload.get("tool_name"), payload.get("tool_input")
+    if not isinstance(name, str) or not isinstance(args, dict):
+        raise Unusable("hook input needs a tool name and its arguments as an object")
+    return name, args
+
+
+def _hook_role(
+    kind: str, payload: Mapping[str, object], checked: Checked, env: Mapping[str, str]
+) -> str | None:
+    for key in HOOK_AGENT_FIELDS[kind]:
+        agent = payload.get(key)
+        if isinstance(agent, str) and agent in checked.roles:
+            return agent
+    role = env.get("FACTORY_ROLE")
+    if not role:
+        return None
+    if role not in checked.roles:
+        raise Unusable(f"unknown role {role!r} in FACTORY_ROLE")
+    return role
+
+
+def _hook_decision(kind: str, payload: Mapping[str, object], env: Mapping[str, str]) -> Decision:
+    name, args = _hook_call(payload)
+    start = _hook_start(payload)
     root = state.find_root(start)
     checked = validate(root)
     if checked:
         raise Unusable(f"invalid agent files or lock records; {CHECK_HINT}")
+    role = _hook_role(kind, payload, checked, env)
 
-    agent_type = payload.get("agent_type")
-    role = agent_type if isinstance(agent_type, str) and agent_type in checked.roles else None
-    if role is None and env.get("FACTORY_ROLE"):
-        role = env["FACTORY_ROLE"]
-        if role not in checked.roles:
-            raise Unusable(f"unknown role {role!r} in FACTORY_ROLE")
-
-    tool = CLAUDE_CODE_TOOLS.get(name)
+    tool = HOOK_TABLES[kind].get(name)
     if tool is None:
         if role is None:
             return Decision(True)
         return Decision(False, f"{role} may not use {name}: it maps to no factory tool")
+    if kind == "cursor" and name == "Write" and role is not None:
+        tools = checked.roles[role]["tools"]
+        if "write" not in tools and "edit" in tools:
+            tool = "edit"  # Cursor can't tell an edit from a write (ADR 0024)
     path = command = None
-    if name in CLAUDE_CODE_PATHS:
-        value = tool_input.get(CLAUDE_CODE_PATHS[name])
-        if not isinstance(value, str) or not value:
-            raise Unusable(f"{name} input has no {CLAUDE_CODE_PATHS[name]}")
+    if tool in ("edit", "write"):
+        keys = (CLAUDE_CODE_PATHS[name],) if kind == "claude-code" else HOOK_PATH_KEYS[kind]
+        value = next((args[k] for k in keys if isinstance(args.get(k), str) and args[k]), None)
+        if value is None:
+            raise Unusable(f"{name} input has no {' or '.join(keys)}")
         path = str(start / value)
     if tool == "run":
-        command = tool_input.get("command")
+        command = args.get("command")
         if not isinstance(command, str):
-            raise Unusable("Bash input has no command")
+            raise Unusable(f"{name} input has no command")
     return _decide(root, checked, role, tool, path, command)
 
 
-def hook_claude_code(stdin: str, env: Mapping[str, str]) -> int:
-    """0 to allow; 2 to block, with the reason on stderr. Never any other code (ADR 0017)."""
-    try:
-        decision = _claude_code_decision(json.loads(stdin), env)
-    except BaseException as exc:  # fail closed: any other exit code would let the call through
-        decision = Decision(False, str(exc))
+def _answer(kind: str, decision: Decision) -> int:
+    """Allow: exit 0, no output. Deny: exit 2, which all three tools honour, in the tool's form."""
     if decision.allowed:
         return 0
-    print(f"factory hook: blocked: {decision.reason}", file=sys.stderr)
+    reason = f"factory hook: blocked: {decision.reason}"
+    if kind == "copilot":
+        print(json.dumps({"permissionDecision": "deny", "permissionDecisionReason": reason}))
+    elif kind == "cursor":
+        print(json.dumps({"permission": "deny", "user_message": reason, "agent_message": reason}))
+    else:
+        print(reason, file=sys.stderr)
     return 2
+
+
+def hook(entry: str, stdin: str, env: Mapping[str, str]) -> int:
+    """Judge one tool call. The payload's shape picks the tool; `entry` answers if it can't."""
+    kind = entry
+    try:
+        payload = json.loads(stdin)
+        if not isinstance(payload, dict):
+            raise Unusable("hook input must be a JSON object")
+        kind = recognise(payload) or entry
+        decision = _hook_decision(kind, payload, env)
+    except BaseException as exc:  # fail closed: any other exit code could let the call through
+        decision = Decision(False, str(exc) or type(exc).__name__)
+    return _answer(kind, decision)
+
+
+def hook_claude_code(stdin: str, env: Mapping[str, str]) -> int:
+    """0 to allow; 2 to block, with the reason on stderr (ADR 0017)."""
+    return hook("claude-code", stdin, env)
 
 
 # --- command line ---------------------------------------------------------------------------------
@@ -758,7 +859,7 @@ def _allow(root: Path, args: argparse.Namespace) -> int:
 
 
 def _hook(root: Path, args: argparse.Namespace) -> int:
-    return hook_claude_code(sys.stdin.read(), os.environ)
+    return hook(args.tool, sys.stdin.read(), os.environ)
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -785,7 +886,7 @@ def _parser() -> argparse.ArgumentParser:
     allow_cmd.add_argument("--command", help="the shell command a run would execute")
     allow_cmd.set_defaults(run=_allow)
     hook_cmd = commands.add_parser("hook", help="run as a coding tool's hook")
-    hook_cmd.add_argument("tool", choices=["claude-code"])
+    hook_cmd.add_argument("tool", choices=HOOK_ENTRIES)
     hook_cmd.set_defaults(run=_hook)
     return parser
 

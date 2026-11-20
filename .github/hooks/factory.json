@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "hooks": {
+    "preToolUse": [
+      {
+        "type": "command",
+        "bash": "sh .factory/agents/copilot-hook",
+        "powershell": "python .factory/agents/agents.py hook copilot",
+        "timeoutSec": 10
+      }
+    ]
+  }
+}
