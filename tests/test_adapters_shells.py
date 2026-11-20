@@ -142,9 +142,13 @@ def assert_denied(tool: str, result: subprocess.CompletedProcess[bytes]) -> None
         assert DENY in err, seen
 
 
-def assert_allowed(result: subprocess.CompletedProcess[bytes]) -> None:
+def assert_allowed(tool: str, result: subprocess.CompletedProcess[bytes]) -> None:
+    """Exit 0: Cursor with {"permission": "allow"} (it blocks on no output), the others silent."""
     assert result.returncode == 0, (result.stdout.decode(), result.stderr.decode())
-    assert result.stdout.strip() == b""
+    if tool == "cursor":
+        assert json.loads(result.stdout) == {"permission": "allow"}, result.stdout
+    else:
+        assert result.stdout.strip() == b""
 
 
 def cases() -> list[tuple[str, str]]:
@@ -170,7 +174,7 @@ def test_each_registered_command_answers_in_each_shell(repo: Path, tool: str, sh
     denied = run(argv, repo, json.dumps(payload(tool, repo, "ls")).encode(), env)
     assert_denied(tool, denied)
     allowed = run(argv, repo, json.dumps(payload(tool, repo, "git status")).encode(), env)
-    assert_allowed(allowed)
+    assert_allowed(tool, allowed)
 
 
 @pytest.mark.ac("E12-AC-03")
@@ -209,7 +213,7 @@ def test_the_cursor_command_answers_through_cursors_powershell_wrapper(
         if check == "denied":
             assert_denied("cursor", result)
         else:
-            assert_allowed(result)
+            assert_allowed("cursor", result)
 
 
 def path_without_sh() -> str | None:
@@ -246,7 +250,7 @@ def test_powershell_commands_need_no_sh_on_path(repo: Path, tool: str, shell: st
     env = environment(tool, path)
     assert_denied(tool, run(argv, repo, json.dumps(payload(tool, repo, "ls")).encode(), env))
     allowed = run(argv, repo, json.dumps(payload(tool, repo, "git status")).encode(), env)
-    assert_allowed(allowed)
+    assert_allowed(tool, allowed)
 
 
 @pytest.mark.ac("E12-AC-05")
@@ -263,7 +267,7 @@ def test_a_payload_with_a_byte_order_mark_is_read(repo: Path, kind: str) -> None
         if denied:
             assert_denied(tool, result)
         else:
-            assert_allowed(result)
+            assert_allowed(tool, result)
 
 
 @pytest.mark.ac("E12-AC-06")
