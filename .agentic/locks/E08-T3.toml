@@ -1,0 +1,6 @@
+task = "E08-T3"
+locked = 2026-11-21T00:11:24Z
+
+[[files]]
+path = "tests/test_evidence_check_pr.py"
+sha256 = "2433490df5c89e0cffffed255cbef407a99bdbf8ec93573d4cf16a04cfff9b3d"
