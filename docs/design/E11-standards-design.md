@@ -48,7 +48,7 @@ pyproject.toml                                 # + kit/.factory/standards in myp
   - each name in `replaces` is a pack, with no cycles
   - each id is unique and in ascending order, with the pack's own prefix
   - each Source URL starts with a source URL from the front matter
-  - each kit pack (every pack but `house`) has 15 to 30 rules in force and uses every severity (spec AC-06)
+  - *(Change, 21 Nov 2026, T1: the rule count and severity mix of spec AC-06 are checked by T2's tests on the kit's 12 packs, not by `validate`. A validator rule would also reject a repo's own small packs, and the `house` exemption would no longer be needed.)*
 
   It also checks `[standards]`: names in `packs` are installed packs, and ids in `ignore` are rules. Problems are sorted by path, then line.
 
