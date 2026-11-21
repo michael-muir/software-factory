@@ -73,6 +73,7 @@ KIT_FILES = frozenset(
         ".factory/gates/hooks/run_hook.py",
         ".factory/state/state.py",
         ".factory/workflow/docs.py",
+        ".factory/workflow/evidence.py",
         ".factory/workflow/templates/adr.md",
         ".factory/workflow/templates/design.md",
         ".factory/workflow/templates/pr-evidence.md",

@@ -498,6 +498,9 @@ class Report:
     dirty: bool = False  # tracked files differed from HEAD
     adapter_files: int | None = None  # tool files build.py produces; None without it (E12)
     adapter_problems: list[str] = dataclasses.field(default_factory=list)
+    # False only for a report read back from a gate older than E12-T3, which had no adapters
+    # section: it then shows no Adapters line, as that gate didn't.
+    adapters_reported: bool = True
 
     @property
     def verdict(self) -> str:
@@ -523,6 +526,8 @@ class Report:
             "adapters": {"files": self.adapter_files, "problems": self.adapter_problems},
             "checks": [dataclasses.asdict(r) for r in self.results],
         }
+        if not self.adapters_reported:
+            del data["adapters"]
         return json.dumps(data, indent=2)
 
     @classmethod
@@ -544,6 +549,7 @@ class Report:
             dirty=bool(data.get("dirty", False)),
             adapter_files=adapters.get("files"),  # null: not checked, no build.py (E12)
             adapter_problems=list(adapters.get("problems", [])),
+            adapters_reported="adapters" in data,
         )
 
     def _commit_line(self) -> str:
@@ -567,7 +573,9 @@ class Report:
         found = f"{count} problem{'' if count == 1 else 's'}" if count else "no problems"
         lines.append(f"Docs: {self.docs_checked} checked, {found}")
         lines += [f"  {problem}" for problem in self.doc_problems]
-        if self.adapter_files is None:
+        if not self.adapters_reported:
+            pass
+        elif self.adapter_files is None:
             lines.append("Adapters: not checked, no build.py")
         else:
             lines.append(

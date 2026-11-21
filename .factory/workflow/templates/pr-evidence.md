@@ -14,7 +14,15 @@ How many tests were added, and where they are locked (`.agentic/locks/<task>.tom
 
 ## Gate evidence
 
-**PASS**: one line per check, with its time. Paste the gate's report.
+**PASS** on `0123456789ab` · Locks: N locked files, none changed · Docs: N checked, no problems · one entry per check, with its time. `evidence.py <task> --gate-report PATH` drafts this from the gate's JSON report (`gate.py --json-out PATH`), for a commit with no uncommitted changes.
+
+<details><summary>Full gate report</summary>
+
+```text
+The gate's full text report, as it printed it.
+```
+
+</details>
 
 ## Findings
 
