@@ -1,0 +1,26 @@
+task = "E13-T1"
+locked = 2026-11-21T09:53:32Z
+
+[[files]]
+path = "tests/_pipeline.py"
+sha256 = "58769742f5685903bac6d2a27388f7cad05f67fb7c58972a8f7d55f8b764aa65"
+
+[[files]]
+path = "tests/test_pipeline_checks.py"
+sha256 = "6e216dcda3c0d3ff81a04b022400337c9f9e14054809ce7092cba928edbcd7c6"
+
+[[files]]
+path = "tests/test_pipeline_cli.py"
+sha256 = "3a33edd3495ab8fe18891930d617cd7c4c7c43d2cd2678f30f2cbd99aa9356d0"
+
+[[files]]
+path = "tests/test_pipeline_sessions.py"
+sha256 = "86b9ce63f13840b38ed7d9ebf878ca101b0bf41885902dbd25bd3edd6ce90a7e"
+
+[[files]]
+path = "tests/test_pipeline_config.py"
+sha256 = "f5aaeebfed69fe05c668474002940997f98a482bf681ea72a6b98d0e839ccb41"
+
+[[files]]
+path = "tests/test_pipeline_docs.py"
+sha256 = "1b46c13b12a5c2c6f3c6603c2f6e6ecd1619d268fced1d45dcb6e7da7847cbcd"
