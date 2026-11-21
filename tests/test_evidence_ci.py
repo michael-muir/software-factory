@@ -418,7 +418,7 @@ def test_ci_github_writes_both_workflows_and_tracks_them(
     assert {EVIDENCE, GATE_WORKFLOW} <= set(loaded.files)
     assert loaded.pipelines == {"github": {"os": ["ubuntu"]}}
     assert cli.main(["ci", "github", str(repo)]) == 0  # a re-render changes nothing
-    assert "0 created" in capsys.readouterr().out
+    assert "is up to date" in capsys.readouterr().out
 
 
 @pytest.mark.ac("E08-AC-12")

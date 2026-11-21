@@ -1,9 +1,9 @@
 task = "E08-T4"
-locked = 2026-11-21T01:12:45Z
+locked = 2026-11-21T01:18:48Z
 
 [[files]]
 path = "tests/test_evidence_ci.py"
-sha256 = "3b5226dfe4c40abd5ac571c45bb4dd09cd464ca1ad22e977bd9392eaf456760c"
+sha256 = "3eac6595fa8134d7f43318127ef2437d2a691aad40d2749c20f466b73d244c4a"
 
 [[files]]
 path = "tests/test_evidence_patch_id.py"
