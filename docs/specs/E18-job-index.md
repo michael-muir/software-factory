@@ -1,7 +1,11 @@
 # E18 · Job index — Spec
 
 Issue: [#18](https://github.com/michael-muir/software-factory/issues/18) · Milestone: M3 · Unattended line · Depends on: E02 (done); builds on E16 (done)
-Status: **Draft, awaiting product owner approval** · Next: Architect design note and ADRs, then failing tests per AC
+Status: **Approved by the product owner, 21 Nov 2026** · Next: Architect design note and ADRs, then failing tests per AC
+
+## Change note (21 Nov 2026)
+
+The product owner decided that E13 (the full-track pipeline) and E18 share **one job, owned by E18**. E18's job record (`work/<id>.toml`), its id and its lease are the job. E13's pipeline keeps its stage, approval and PR details in a sidecar file beside the record, keyed by the same id (AC-03), and its driver claims the job with E18's lease and sends heartbeats while it runs. So job ids are at most 30 characters (AC-02), the same as E13's, and E18's first slice (the record, `new`, `show`, `claim`, `beat` and `release`) merges before E13's driver slice. E13's spec carries the matching note.
 
 ## Goal
 
@@ -77,7 +81,7 @@ The router (E19), the cost controls (E21), the watchdog (E22) and the Line Monit
 
 - **AC-01** `jobs.py` runs under `python -I -S` with Python 3.11+, and imports only the standard library. Run anywhere inside a repo, from the main checkout or from any worktree, it uses that repo's records and the one index at `<git-common-dir>/factory/index.sqlite`, and creates the index if it's missing. Exit code 0 means the command did what it was asked. 1 means it was refused, for example by a live lease. 2 means bad input: a bad argument, an invalid config, an unknown job, or a directory that isn't in a git repo with at least one commit.
 - **AC-02** `jobs.py new "<title>" [--id ID] [--track T] [--task TASK] [--branch B] [--worktree PATH]` writes a new job record and prints its id.
-  - **Ids:** a generated id is `job-<n>`, the next free number from 1. A given id must match `[a-z0-9][a-z0-9-]{0,39}`. Ids are reserved atomically, so two `new` commands run at the same time never get the same id, and a used id is refused with exit 2.
+  - **Ids:** a generated id is `job-<n>`, the next free number from 1. A given id must match `[a-z0-9][a-z0-9-]{0,29}`, at most 30 characters, so runner job ids built from it fit E16's 40. Ids are reserved atomically, so two `new` commands run at the same time never get the same id, and a used id is refused with exit 2.
   - **Defaults:** `track = "full"`, `phase = "spec"`, `status = "open"`, `task` = the job's id, and an empty branch and worktree.
   - **Tasks:** a task id must match `state.py`'s `[A-Za-z0-9._-]+`. A task held by another job that isn't `done` or `cancelled` is refused with exit 1.
 - **AC-03** A job record is one TOML file, `work/<id>.toml`, and is always written atomically: no reader ever sees a half-written file. It holds:
@@ -88,7 +92,9 @@ The router (E19), the cost controls (E21), the watchdog (E22) and the Line Monit
   - `created` and `updated`;
   - a `[[claims]]` table per claim: the session, the time, `forced`, and the session it was taken from.
 
-  `jobs.py show <job> [--json]` prints the record. `--json` prints the same fields as JSON.
+  Other epics may keep their own details about a job in **sidecar files** beside the record, `work/<id>.<name>.toml`, where `<name>` matches `[a-z][a-z0-9]{0,19}`: E13's pipeline keeps its stages, approvals and PRs in `work/<id>.pipeline.toml`. `jobs.py` never writes or validates a sidecar, and a sidecar never changes the job's record.
+
+  `jobs.py show <job> [--json]` prints the record, and the paths of its sidecars. `--json` prints the same fields as JSON.
 
 - **AC-04** `jobs.py set <job> --session S` takes `--title`, `--track`, `--phase`, `--status`, `--task`, `--branch` and `--worktree`, and updates those fields and `updated`. Only the session holding the job's live lease may set fields; anyone else gets exit 1. A new `--task` is appended to `tasks`, under the same rule as AC-02. An invalid value exits 2 and changes nothing.
 
@@ -159,7 +165,7 @@ The router (E19), the cost controls (E21), the watchdog (E22) and the Line Monit
 - **AC-18** `install.py check` validates the `[jobs]` keys by the rules in the table above. The default config that `install.py` writes includes `[jobs]` with its defaults and comments. A config without `[jobs]` stays valid. This repo's `.agentic/config.toml` gets the section, and `jobs.py` and `install.py` agree on every key, as a test pins.
 - **AC-19** `jobs.py` is a kit file, installed by `install.py` and listed in the kit layout tests, and this repo commits its install. `docs/GLOSSARY.md` gains job, runner job and lease. CI runs the index tests on Ubuntu, macOS and Windows. ruff, `ruff format --check` and `mypy --strict` pass, and every AC above has at least one test tagged `E18-AC-nn`.
 
-## Assumptions (to confirm with approval)
+## Assumptions (confirmed with approval, 21 Nov 2026)
 
 1. **The tool is `.factory/control/jobs.py`.** The blueprint already names `control/watchdog`, so the control plane gets one folder.
 2. **The schema has a version and moves forward by migration** (AC-09). Since the index can always be rebuilt from files, an index from a newer kit is refused, never downgraded.
