@@ -1,7 +1,7 @@
 # E13 · Full-track pipeline — Spec
 
 Issue: [#13](https://github.com/michael-muir/software-factory/issues/13) · Milestone: M2 · One job, end to end · Depends on: E08 (done), E12 (done)
-Status: **Draft, awaiting product owner approval** · Next: Architect design note and ADRs, then failing tests per AC
+Status: **Approved by the product owner, 21 Nov 2026** · Next: Architect design note and ADRs, then failing tests per AC
 
 ## Goal
 
@@ -33,7 +33,8 @@ E13 runs one job through one track. E14 adds the review loop, E15 the lite track
 ## In scope
 
 - `pipeline.md`, and `pipeline.py` with these commands: `new`, `run`, `check`, `approve`, `reject`, `resume`, `cancel` and `status`.
-- The pipeline job record, and the job summary written at the learn stage.
+- The job's pipeline record, kept beside E18's job record and keyed by its id, and the job summary written at the learn stage.
+- Claiming the job with E18's lease while the pipeline writes, and keeping the E18 job's phase, task, branch, worktree and status current.
 - A list of every stage, its role, its skill and the check that decides whether it passed.
 - The prompt the driver gives each role, the agent command template, and reporting each session's cost to the runner's ledger.
 - The human checkpoints for the spec, the optional design acceptance and the merge, and the status lines that approvals write.
@@ -48,7 +49,7 @@ E13 runs one job through one track. E14 adds the review loop, E15 the lite track
 - **E14:** review rounds after the first, the fix-and-re-review loop, round limits per track, and strict reviewer isolation (a reviewer that can't read another reviewer's findings).
 - **E15:** the lite track and pass-through jobs. E13 accepts only `track = "full"`.
 - **E17:** the merge-risk rating, and routing by it.
-- **E18:** the SQLite job index, leases, and handing a job over after a crash. E13's record is a plain file the index can read later.
+- **E18:** the job record itself, the SQLite index, leases and heartbeats, and handing a job over after a crash. E13 uses E18's `jobs.py` for all of them.
 - **E19:** running several pipeline jobs at once, the Router session, and a `delegate` tool that lets one agent start another.
 - **E20:** mapping `model_hint` and `different_from` to real models. Every role runs on the agent command's default model.
 - **E21:** the daily budget and real metering beyond the cost the agent reports.
@@ -80,19 +81,20 @@ E13 runs one job through one track. E14 adds the review loop, E15 the lite track
 | -------------------------------- | -------------------------------------------------------------------------------------------- |
 | The full track, for people       | `.factory/workflow/pipeline.md` (kit file)                                                   |
 | The tool                         | `.factory/workflow/pipeline.py` (kit file)                                                   |
-| Pipeline job records             | `<git-common-dir>/factory/pipeline/<job>/job.toml`, never tracked by git                     |
-| Approvals, rejections, PR bodies | `<git-common-dir>/factory/pipeline/<job>/` beside the record                                 |
-| Job summary and closing handoff  | `<git-common-dir>/factory/pipeline/<job>/summary.toml` and `handoff.md`                      |
+| The job (E18's record)           | `<git-common-dir>/factory/work/<job>.toml`, owned by E18's `jobs.py`                         |
+| The job's pipeline record        | `<git-common-dir>/factory/work/<job>/pipeline.toml`, beside the job, never tracked by git    |
+| Approvals, rejections, PR bodies | `<git-common-dir>/factory/work/<job>/`                                                       |
+| Job summary and closing handoff  | `<git-common-dir>/factory/work/<job>/summary.toml` and `handoff.md`                          |
 | Runner jobs                      | E16's own records, ids `<job>-plan` and `<job>-t<n>`, each run with `--task` set to its task |
 
 ## New `config.toml` keys
 
-| Key                      | Type            | Default                                                                                                                  | Rule                                                                                   |
-| ------------------------ | --------------- | ------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------- |
-| `pipeline.checkpoints`   | list of strings | `["spec", "merge"]`                                                                                                      | each is `spec`, `design` or `merge`, with no repeats; `spec` and `merge` are required  |
-| `pipeline.agent_command` | list of strings | `["claude", "-p", "--agent", "{role}", "--output-format", "json", "--permission-mode", "bypassPermissions", "{prompt}"]` | not empty; contains `{prompt}` once; `{role}` and `{prompt}` are the only placeholders |
-| `pipeline.forge`         | string          | `"github"`                                                                                                               | `"github"` or `"git"`                                                                  |
-| `pipeline.gate_retries`  | integer         | 2                                                                                                                        | 0 to 5                                                                                 |
+| Key                      | Type            | Default                                                                                                                                                                                 | Rule                                                                                                      |
+| ------------------------ | --------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| `pipeline.checkpoints`   | list of strings | `["spec", "merge"]`                                                                                                                                                                     | each is `spec`, `design` or `merge`, with no repeats; `spec` and `merge` are required                     |
+| `pipeline.agent_command` | list of strings | `["claude", "-p", "--agent", "{role}", "--output-format", "json", "--permission-mode", "acceptEdits", "--permission-prompts", "none", "--allowedTools", "{allowed_tools}", "{prompt}"]` | not empty; contains `{prompt}` once; `{role}`, `{allowed_tools}` and `{prompt}` are the only placeholders |
+| `pipeline.forge`         | string          | `"github"`                                                                                                                                                                              | `"github"` or `"git"`                                                                                     |
+| `pipeline.gate_retries`  | integer         | 2                                                                                                                                                                                       | 0 to 5                                                                                                    |
 
 This repo's `.agentic/config.toml` sets `checkpoints = ["spec", "design", "merge"]`. Existing configs without `[pipeline]` stay valid, and the defaults apply.
 
@@ -101,13 +103,13 @@ This repo's `.agentic/config.toml` sets `checkpoints = ["spec", "design", "merge
 **The tool and the job record**
 
 - **AC-01** `pipeline.py` runs under `python -I -S` with Python 3.11+ and imports only the standard library. It uses the same exit codes as `run.py`: 0 when the command did what it was asked, 1 when it was refused (a stage check failed, a checkpoint is waiting, or the job is in the wrong state), and 2 for bad input (a bad argument, an invalid config, an unknown job, or not a git repo).
-- **AC-02** `pipeline.py new <job> --epic <EPIC> (--request-file FILE | --issue N) [--title T]` writes the job's record atomically and exits 0.
+- **AC-02** `pipeline.py new <job> --epic <EPIC> (--request-file FILE | --issue N) [--title T]` creates the job with E18's `jobs.py new` (id `<job>`, `--track full`, task `<job>`), writes the job's pipeline record beside it atomically, and exits 0. An E18 job that already exists with that id and no pipeline record is taken over instead of created, if it's `open` and on the full track.
   - The id matches `[a-z0-9][a-z0-9-]{0,29}`, so every runner id built from it fits E16's limit.
   - The epic matches `E[0-9]+`, and must not have a spec in `docs/specs/` yet.
   - `--issue` reads the issue's title and body through `gh api` (REST) when `forge = "github"`.
   - An id already used in this repo is refused with exit 2.
-- **AC-03** `pipeline.py status <job> [--json]` prints the record. The record holds at least:
-  - the id, epic, issue, title, track (always `full`) and `status`: `ready`, `running`, `awaiting-approval`, `awaiting-merge`, `needs-human`, `cancelled` or `done`
+- **AC-03** `pipeline.py status <job> [--json]` prints the E18 job's fields and the pipeline record. The pipeline record holds at least:
+  - the id (the E18 job's), epic, issue and `status`: `ready`, `running`, `awaiting-approval`, `awaiting-merge`, `needs-human`, `cancelled` or `done`
   - `reason`: empty unless the status is `needs-human` or `cancelled`
   - the current stage and current task
   - each task's runner job id, branch and PR
@@ -118,24 +120,27 @@ This repo's `.agentic/config.toml` sets `checkpoints = ["spec", "design", "merge
 
 **The stage machine**
 
-- **AC-04** `pipeline.py check <job> [<stage>]` runs the stage's exit check from the table above, on that stage's branch, and changes nothing. It exits 0 when the check passes. Otherwise it exits 1 and prints one problem per line, each naming the stage, the file or commit, and what's missing. Each stage's check has a test with a passing case and at least one failing case for each condition in its row.
+- **AC-04** `pipeline.py check <job> [<stage>]` runs the stage's exit check from the table above, on that stage's worktree, and changes nothing. `pipeline.py check <stage> --worktree PATH --epic EPIC [--task TASK] [--base REF]` runs the same check on any checkout, without a job. It exits 0 when the check passes. Otherwise it exits 1 and prints one problem per line, each naming the stage, the file or commit, and what's missing. Each stage's check has a test with a passing case and at least one failing case for each condition in its row.
 - **AC-05** The stages run in the table's order, and none is skipped. For each task, test, build, gate, review, docs and ship run in that order, and tasks run in task-id order. A stage starts only after the stage before it has passed its check, and after that stage's checkpoint, if it has one, is approved. The driver can't move a job forward in any other way, and a test shows that a failed check leaves the job where it was.
 
 **The driver**
 
-- **AC-06** `pipeline.py run <job>` takes the job from where it stands to the next human checkpoint, or to the end.
+- **AC-06** `pipeline.py run <job> [--session S]` takes the job from where it stands to the next human checkpoint, or to the end.
+  - It first claims the job with E18's lease (`jobs.py claim`), and refuses with exit 1, changing nothing, while another session holds a live lease. It beats (`jobs.py beat`) at least once per `jobs.lease_minutes / 3` while it runs, and releases the lease when it stops. It keeps the E18 job's `phase`, `task`, `branch` and `worktree` current with `jobs.py set`, sets its `status` to `blocked` while the pipeline needs a human, and to `done` or `cancelled` at the end. Every runner job it submits has `--task` set to one of the job's tasks, so it belongs to the job.
   - It submits the plan job and the slice jobs to the E16 queue with `run.py submit --open --task <task>`, sends each role's session to them with `run.py send`, waits for each command through `run.py status`, and closes each runner job once its stage is over.
   - It exits 0 when it stops at a checkpoint or at the end, and 1 when it stops for a human.
   - Run again, it carries on from the record and never repeats a stage that has passed.
-- **AC-07** **The agent command.** For each role session, the driver fills in `pipeline.agent_command`: `{role}` becomes the role's name and `{prompt}` the stage prompt. The command runs with `FACTORY_ROLE=<role>`, so the E03 hook holds the role to its tools. The prompt is plain text, the same for the same inputs, and names:
-  - the job, stage, epic and task
-  - the role's skill
-  - the spec, the design note and the task file, by path
-  - the human's last rejection note for that stage, if there is one
-  - what has to be true for the stage to pass
+- **AC-07** **The agent command.** For each role session, the driver fills in `pipeline.agent_command`: `{role}` becomes the role's name, `{allowed_tools}` the role's allow-list and `{prompt}` the stage prompt. The command runs with `FACTORY_ROLE=<role>`, so the E03 hook holds the role to its tools and the locks as a second layer, under E16's caps.
+  - **The allow-list** is generated from the role's card, as one comma-separated string in Claude Code's permission rule syntax. Each neutral tool maps to E12's Claude Code names (`read` to `Read`; `search` to `Glob`, `Grep`; `edit` to `Edit`, `MultiEdit`, `NotebookEdit`; `write` to `Write`; `web` to `WebFetch`, `WebSearch`). `run` maps to `Bash` and `PowerShell` for a role with no `[scope].run`. For a role with run scopes, it maps to `Bash(<prefix> *)` and `PowerShell(<prefix> *)` for each prefix, in the card's order, and never to a bare `Bash` or `PowerShell`. A test pins the list for `implementer`, `verifier` and `docs-writer`, and checks that every core role's list holds only rules for its own tools.
+  - **The prompt** is plain text, the same for the same inputs, and names:
+    - the job, stage, epic and task
+    - the role's skill
+    - the spec, the design note and the task file, by path
+    - the human's last rejection note for that stage, if there is one
+    - what has to be true for the stage to pass
 - **AC-08** **Cost.** When a session's output is JSON with a numeric `total_cost_usd`, the driver reports it with `run.py usage <runner-job> --usd <n>` and adds it to the stage in the record. Output without it adds a warning to the record, and the stage carries on. A runner job halted by any E16 cap stops the pipeline job as `needs-human`, with the runner's reason.
 - **AC-09** **A failed stage stops for a human.** When a role's session exits non-zero, or its stage check fails, the job becomes `needs-human`, with a reason that names the stage and the check's problems, and no later stage starts. The gate is the one exception (AC-12).
-- **AC-10** `pipeline.py resume <job> [--note TEXT]` sets a `needs-human` job back to `running` and runs the stopped stage again, with the note in the prompt. If that stage's runner job has finished or halted, resume first starts a new runner job from that job's branch (`--base factory/<old-id>`). `pipeline.py cancel <job>` cancels the job's running runner job (E16 `cancel`) and marks the pipeline job `cancelled`. Resuming or cancelling a job that's done or cancelled exits 1 and changes nothing.
+- **AC-10** `pipeline.py resume <job> [--note TEXT]` sets a `needs-human` job back to `running` and runs the stopped stage again, with the note in the prompt. If that stage's runner job has finished or halted, resume first starts a new runner job from that job's branch (`--base factory/<old-id>`). `pipeline.py cancel <job>` cancels the job's running runner job (E16 `cancel`), and marks the pipeline record and the E18 job `cancelled`. Both commands, and `approve` and `reject`, take E18's lease for the time they write, by AC-06's rules, and refuse with exit 1 while another session holds it. Resuming or cancelling a job that's done or cancelled exits 1 and changes nothing.
 
 **Checkpoints**
 
@@ -194,7 +199,7 @@ This repo's `.agentic/config.toml` sets `checkpoints = ["spec", "design", "merge
 - **AC-21** **Live (product owner):** in this repo, one real issue runs through `pipeline.py run` with the default Claude Code agent command, from `new` to `done`. The product owner approves the spec (and the design) with `pipeline.py approve` and merges each PR on GitHub. The live run's record, summary and PRs are linked from E13's closing PR.
 - **AC-22** `pipeline.py` is a kit file, installed by `install.py` and listed in the kit layout tests, and this repo commits its install. ruff, `ruff format --check` and `mypy --strict` pass. Every AC above has at least one test tagged `E13-AC-nn`, except AC-21.
 
-## Assumptions (to confirm with approval)
+## Assumptions (confirmed with approval, 21 Nov 2026)
 
 1. **The docs stage needs `CHANGELOG.md`.** E13 creates it in this repo, in the Keep a Changelog form the release skill reads (`## [Unreleased]`). In a repo with no changelog, the `docs-writer` creates one.
 2. **The learn stage writes a record, not a retro.** The job summary and the closing handoff are kept beside the job record, outside git. They're not committed, because committing them would need another PR after the last merge. E28 reads them.
@@ -202,12 +207,18 @@ This repo's `.agentic/config.toml` sets `checkpoints = ["spec", "design", "merge
 4. **PRs go through GitHub's REST API, opened by the driver.** I've changed one detail from the interview here. The Integrator drafts and fills in the body, and the driver opens the PR only after the body passes `check-pr --strict`, so the check decides whether a PR opens. Everything uses `gh api` REST; nothing uses GraphQL.
 5. **Approvals by command.** `approve` and `reject` are command-line commands for now. E24 adds `/foundry approve · reject · ask` in GitHub threads, using the same record.
 6. **The spec interview is asynchronous.** A headless Spec Writer can't ask questions as it goes. It writes the draft spec with its questions as assumptions and options, and the product owner answers with `reject --note` (another round) or `approve`.
-7. **The default agent command uses `--permission-mode bypassPermissions`,** because no one is there to answer prompts. The role's limits come from the E03 hook (`FACTORY_ROLE` and locked tests) and the E16 caps, not from Claude Code's prompts. The product owner should confirm this default.
+7. **The default agent command doesn't bypass permissions** (changed at approval, see Changes). It uses `--permission-mode acceptEdits` and `--permission-prompts none`, with an `--allowedTools` list generated from the role's card (AC-07). Anything else that would prompt is denied. The E03 hook and the E16 caps still apply on top, so there are two layers.
 8. **The first slice carries the plan.** The spec, the design and the task files reach main in the first slice's PR, as they have in this repo, not in a separate PR.
-9. **A pipeline job is not E18's job record.** E13 keeps its own record under `<git-common-dir>/factory/pipeline/`, linked to its runner jobs through `--task`. When E18 lands, its index reads this record, or absorbs it. The two epics' architects agree on the shape before either design is accepted.
+9. **There is one job, and E18 owns it** (replaced at approval, see Changes). E18's record, `<git-common-dir>/factory/work/<id>.toml`, with its id and lease, is the job. The pipeline keeps its stages, approvals and PRs in `work/<id>/pipeline.toml`, beside it and keyed by the same id. The driver claims the job with E18's lease and beats while it runs. E18's T1 (the record, `new`, `claim` and `beat`) merges before E13's driver slice, so E13 builds and merges its stage machine first.
 10. **Gate retries.** A red gate gets up to `gate_retries` Debugger sessions (2 by default), each bounded by E16's caps. This is the one automatic retry in E13, and it isn't a review round.
 11. **The live run's epic id.** The live job on #82 takes the next free epic id (E31), so its spec and AC tags can't clash with E08's.
 12. **Reviewers all run on one model** until E20, so `different_from` isn't honoured yet. Strict reviewer isolation is E14's.
+
+## Changes
+
+- **21 Nov 2026, at approval, by the product owner (assumption 7, AC-07, config):** for security, the default agent command no longer uses `--permission-mode bypassPermissions`. It uses `--permission-mode acceptEdits` and `--permission-prompts none`, with an `--allowedTools` list generated from each role's card: its tools, and its run scopes as `Bash(<prefix> *)` and `PowerShell(<prefix> *)` rules. That is Claude Code's documented rule form (code.claude.com/docs/en/permissions: a space before the trailing `*` gives prefix matching, `:*` is an older equivalent, and a compound command must match each part). The E03 hook and the E16 caps stay on top, so a role is held by two layers. AC-07 gains the allow-list and a test that pins it, and `{allowed_tools}` becomes a template placeholder.
+- **21 Nov 2026, at approval, by the product owner (assumption 9, AC-02, AC-03, AC-06, AC-10):** there is one job, and E18 owns it. `pipeline.py new` creates the E18 job, and the pipeline's own record lives beside it in `work/<id>/`. `run`, `approve`, `reject`, `resume` and `cancel` hold E18's lease while they write, and the driver beats while it runs. E13's driver slice waits for E18's T1 to merge. AC-04 also gains a form that checks any checkout without a job, so the stage machine can be built and merged first.
+- **21 Nov 2026, at approval (assumption 4):** confirmed that the driver opens the PR, and only after the Integrator's body passes `check-pr --strict`.
 
 ## Notes for the Architect (design, not requirements)
 
