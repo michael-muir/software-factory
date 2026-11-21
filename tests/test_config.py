@@ -38,6 +38,7 @@ SPEC_DEFAULTS = {
         "max_parallel": 2,
         "worktree_root": "",
     },
+    "jobs": {"lease_minutes": 10, "daemon_timeout_seconds": 60},
     "telemetry": {"enabled": False},
 }
 
