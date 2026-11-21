@@ -39,5 +39,9 @@ agent_command = ["claude", "-p", "--agent", "{role}", "--output-format", "json",
 forge = "github"  # "github" | "git"
 gate_retries = 2  # Debugger sessions on a red gate; 0 to 5
 
+[jobs]
+lease_minutes = 10  # a session's lease on a job; > 0
+daemon_timeout_seconds = 60  # a daemon is dead after this long silent; >= 5
+
 [telemetry]
 enabled = false

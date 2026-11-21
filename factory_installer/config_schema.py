@@ -66,6 +66,13 @@ def _positive(value: Any) -> str | None:
     return None if value > 0 else "must be greater than 0"
 
 
+def _at_least(low: float) -> Check:
+    def check(value: Any) -> str | None:
+        return None if value >= low else f"must be at least {low:g}"
+
+    return check
+
+
 def _equals_one(value: Any) -> str | None:
     return None if value == 1 else "must be 1"
 
@@ -213,6 +220,12 @@ SECTIONS: dict[str, dict[str, Field]] = {
         ),
         "forge": Field("str", "github", _one_of("github", "git"), '"github" | "git"'),
         "gate_retries": Field("int", 2, _between(0, 5), "Debugger sessions on a red gate; 0 to 5"),
+    },
+    "jobs": {
+        "lease_minutes": Field("number", 10, _positive, "a session's lease on a job; > 0"),
+        "daemon_timeout_seconds": Field(
+            "number", 60, _at_least(5), "a daemon is dead after this long silent; >= 5"
+        ),
     },
     "telemetry": {
         "enabled": Field("bool", False),
