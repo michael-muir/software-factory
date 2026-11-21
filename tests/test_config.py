@@ -38,6 +38,7 @@ SPEC_DEFAULTS = {
         "max_parallel": 2,
         "worktree_root": "",
     },
+    "standards": {"packs": {}, "ignore": []},
     "telemetry": {"enabled": False},
 }
 

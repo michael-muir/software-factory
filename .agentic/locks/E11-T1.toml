@@ -1,0 +1,10 @@
+task = "E11-T1"
+locked = 2026-11-21T09:54:12Z
+
+[[files]]
+path = "tests/test_standards_check.py"
+sha256 = "792a4284fe0d52cfa4e0c2cf3fdb09d8b531f5fb4497bc6a349a540d5b248313"
+
+[[files]]
+path = "tests/_standards.py"
+sha256 = "c1b57552a81c28ea9eb1c4d13fa50b16de6fedc8e39c22e04a0c99eee882c841"
