@@ -47,9 +47,10 @@ ALL_SKILLS = frozenset(
         "retro",
         "release",
         "dependency-bump",
+        "pull-request-evidence",
     }
 )
-NOT_YET = frozenset({"pull-request-evidence"})  # E08 ships it (spec AC-05)
+NOT_YET: frozenset[str] = frozenset()  # E08 shipped pull-request-evidence (E08 AC-16)
 
 # AC-07: how each skill was exercised. Live entries name the PR and commits that followed it.
 EXERCISED: dict[str, tuple[str, str]] = {
@@ -69,6 +70,7 @@ EXERCISED: dict[str, tuple[str, str]] = {
     "threat-check": ("fixture", ""),
     "perf-budget": ("fixture", ""),
     "adversarial-testing": ("fixture", ""),
+    "pull-request-evidence": ("live", "#77: 62db80a; #78: 7b0f53c"),
 }
 
 
