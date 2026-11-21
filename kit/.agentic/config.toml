@@ -36,5 +36,9 @@ job_timeout_minutes = 120  # per job; > 0
 max_parallel = 2  # jobs at once per daemon; 1 to 64
 worktree_root = ""  # empty = "../<repo>.worktrees"
 
+[jobs]
+lease_minutes = 10  # a session's lease on a job; > 0
+daemon_timeout_seconds = 60  # a daemon is dead after this long silent; >= 5
+
 [telemetry]
 enabled = false
