@@ -1,0 +1,30 @@
+# Software Factory PR evidence (E08). Rendered by `python install.py ci github`; upgrades re-render it.
+name: factory-pr-evidence
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+permissions:
+  contents: read
+jobs:
+  pr-evidence:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Read the PR body
+        run: |
+          python - <<'PY'
+          import json, os, pathlib
+          event = json.loads(pathlib.Path(os.environ["GITHUB_EVENT_PATH"]).read_text(encoding="utf-8"))
+          body = (event.get("pull_request") or {}).get("body") or ""
+          pathlib.Path(os.environ["RUNNER_TEMP"], "pr-body.md").write_text(body, encoding="utf-8")
+          PY
+      - name: Check the PR evidence
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: "python .factory/workflow/docs.py --root . check-pr --strict \"$RUNNER_TEMP/pr-body.md\" --commits $(git rev-list \"$BASE..$HEAD\")"

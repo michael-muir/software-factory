@@ -15,6 +15,7 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import re
+import subprocess
 import sys
 from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass, field
@@ -269,14 +270,63 @@ def _spec_ids(root: Path, epic: str) -> set[str] | None:
     return {ac for spec in specs for ac in AC_ID.findall(spec.read_text(encoding="utf-8"))}
 
 
-def commit_problems(text: str, name: str, commits: Sequence[str]) -> list[Problem]:
-    """E08 AC-10: the evidence's commit must be one of the PR's (a full SHA or 7+ prefix)."""
+PR_PATCH_ID = re.compile(r"patch-id `([0-9a-f]{7,40})`")
+
+
+def patch_id(root: Path, commit: str) -> str | None:
+    """`git patch-id --stable` of one commit, or None: no git, no such commit, or no diff."""
+    try:
+        shown = subprocess.run(
+            ["git", "show", "--no-color", "--no-ext-diff", commit, "--"],
+            cwd=root,
+            capture_output=True,
+            check=False,
+        )
+        if shown.returncode != 0 or not shown.stdout:
+            return None
+        found = subprocess.run(
+            ["git", "patch-id", "--stable"],
+            cwd=root,
+            input=shown.stdout,
+            capture_output=True,
+            check=False,
+        )
+    except OSError:
+        return None
+    words = found.stdout.decode("ascii", errors="replace").split()
+    return words[0] if found.returncode == 0 and words else None
+
+
+def recorded_patch_id(text: str) -> str | None:
+    """The patch-id the gate evidence records after its commit (ADR 0027)."""
+    lines = text.replace("\r\n", "\n").split("\n")
+    for line in _raw_section(lines, "## Gate evidence"):
+        found = PR_PATCH_ID.search(line)
+        if found:
+            return found.group(1)
+    return None
+
+
+def _same(a: str, b: str) -> bool:
+    return len(a) >= 7 and len(b) >= 7 and (a.startswith(b) or b.startswith(a))
+
+
+def commit_problems(
+    text: str, name: str, commits: Sequence[str], root: Path | None = None
+) -> list[Problem]:
+    """E08 AC-10: the evidence's commit must be one of the PR's (a full SHA or 7+ prefix), or
+    have the same patch-id as one of them, so a clean rebase still counts (ADR 0027)."""
     evidence = "## Gate evidence"
     commit = pr_commit(text)
     if commit is None:
         return [state.Problem(name, evidence, "no commit SHA")]
-    if any(len(c) >= 7 and (c.startswith(commit) or commit.startswith(c)) for c in commits):
+    if any(_same(c, commit) for c in commits):
         return []
+    if root is not None and commits:
+        # The commit's own patch-id when git has it; else the one the body records.
+        own = patch_id(root, commit) or recorded_patch_id(text)
+        if own and any((theirs := patch_id(root, c)) and _same(theirs, own) for c in commits):
+            return []
     listed = ", ".join(c[:SHORT_SHA] for c in commits) if commits else "none"
     message = f"evidence is for {commit}, which is not a commit of this PR (its commits: {listed})"
     return [state.Problem(name, evidence, message)]
@@ -295,7 +345,7 @@ def lint_pr_strict(
         if pr_commit(text) is None:
             found.append(state.Problem(name, "## Gate evidence", "no commit SHA"))
     else:
-        found += commit_problems(text, name, commits)
+        found += commit_problems(text, name, commits, root)
 
     trace = "## Acceptance criteria"
     section = _raw_section(lines, trace)
@@ -385,7 +435,7 @@ def _check_pr(root: Path, args: argparse.Namespace) -> int:
     if args.strict:
         found += lint_pr_strict(text, name, root, args.commits)
     elif args.commits is not None:
-        found += commit_problems(text, name, args.commits)
+        found += commit_problems(text, name, args.commits, root)
     for problem in found:
         print(problem)
     return 1 if found else 0

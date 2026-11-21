@@ -1,7 +1,7 @@
 # E08 · PR evidence design note
 
 Spec: [E08 spec](../specs/E08-pr-evidence.md) · Issue: [#8](https://github.com/michael-muir/software-factory/issues/8)
-Status: **Accepted by the product owner, 19 Nov 2026** · ADRs: [0025](../adr/0025-pr-evidence-is-drafted-from-the-gates-json-report.md) · [0026](../adr/0026-pr-bodies-are-checked-in-their-own-github-workflow.md)
+Status: **Accepted by the product owner, 19 Nov 2026** · ADRs: [0025](../adr/0025-pr-evidence-is-drafted-from-the-gates-json-report.md) · [0026](../adr/0026-pr-bodies-are-checked-in-their-own-github-workflow.md) · [0027](../adr/0027-pr-evidence-matches-rebased-commits-by-patch-id.md)
 
 ## Summary
 
@@ -81,6 +81,7 @@ E04's `lint_pr` runs first, unchanged. Then `lint_pr_strict(text, name, root, co
 - **The spec:** with an epic named, at least one AC line, and every id must be in `docs/specs/<EPIC>-*.md` under the root. Missing: "not in the E08 spec". No spec at all: "no spec for E08".
 - **Placeholders:** any line containing `TODO(author)`.
 - **`--commits SHA ...`:** the commit must be a prefix of one of them, or equal to one. If not: "evidence is for <sha>, which is not a commit of this PR".
+- **Rebased commits (20 Nov 2026, ADR 0027):** if no SHA matches, `check-pr` takes the evidence's patch-id (`git show <sha> | git patch-id --stable` when git has the commit, else the `patch-id` the body records) and compares it with each PR commit's patch-id. `evidence.py` records the patch-id after the commit in the summary line when git has the commit.
 - An empty file, or empty stdin, gives E04's four missing-heading problems plus the strict ones.
 
 ## Test seams

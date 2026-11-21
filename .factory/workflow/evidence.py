@@ -301,11 +301,16 @@ def draft(root: Path, task: str, report_path: Path) -> str:
         )
     text = report.to_text()
     fence = _fence(text)
+    line = summary_line(report)
+    pid = docs.patch_id(root, report.commit)  # ADR 0027: a clean rebase still matches
+    if pid:
+        shown = f"on `{report.commit[:SHORT_SHA]}`"
+        line = line.replace(shown, f"{shown} (patch-id `{pid}`)", 1)
     lines += [
         "",
         "## Gate evidence",
         "",
-        summary_line(report),
+        line,
         "",
         "<details><summary>Full gate report</summary>",
         "",
