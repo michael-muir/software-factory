@@ -137,7 +137,11 @@ def run_check(repo: Path) -> int:
         print(f"{shown}: {key}: not set, using default {default}")
 
     problems = (
-        state_problems(repo) + agent_problems(repo) + docs_problems(repo) + adapter_problems(repo)
+        state_problems(repo)
+        + agent_problems(repo)
+        + docs_problems(repo)
+        + standards_problems(repo)
+        + adapter_problems(repo)
     )
     for problem in problems:
         print(problem)
@@ -164,6 +168,13 @@ def agent_problems(repo: Path, kit_root: Path = KIT_ROOT) -> list[str]:
 def docs_problems(repo: Path, kit_root: Path = KIT_ROOT) -> list[str]:
     """The target's specs, design notes and ADRs, linted by the kit's docs module (E04)."""
     module = load_kit_module(kit_root / ".factory/workflow/docs.py", "factory_kit_docs")
+    return [] if module is None else [str(p) for p in module.validate(repo)]
+
+
+def standards_problems(repo: Path, kit_root: Path = KIT_ROOT) -> list[str]:
+    """E11: the target's standards packs and [standards] config, checked by the kit's module."""
+    path = kit_root / ".factory/standards/standards.py"
+    module = load_kit_module(path, "factory_kit_standards")
     return [] if module is None else [str(p) for p in module.validate(repo)]
 
 

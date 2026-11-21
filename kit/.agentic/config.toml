@@ -36,5 +36,9 @@ job_timeout_minutes = 120  # per job; > 0
 max_parallel = 2  # jobs at once per daemon; 1 to 64
 worktree_root = ""  # empty = "../<repo>.worktrees"
 
+[standards]
+packs = {}  # pack name = true | false; empty = every pack on
+ignore = []  # rule ids switched off here, e.g. ["PY-007"]
+
 [telemetry]
 enabled = false

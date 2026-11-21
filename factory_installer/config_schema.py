@@ -6,6 +6,7 @@ because the standard library cannot write TOML.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from typing import Any
@@ -18,12 +19,13 @@ _KIND_NAMES = {
     "str": "a string",
     "bool": "a boolean",
     "strlist": "a list of strings",
+    "booltable": "a table of true or false values",
 }
 
 
 @dataclass(frozen=True)
 class Field:
-    kind: str  # "int" | "number" | "str" | "bool" | "strlist"
+    kind: str  # "int" | "number" | "str" | "bool" | "strlist" | "booltable"
     default: object
     check: Check | None = None
     comment: str = ""
@@ -98,6 +100,18 @@ def _adapter_tools(value: Any) -> str | None:
     return None
 
 
+RULE_ID = re.compile(r"[A-Z]{2,5}-\d{3}")
+
+
+def _pack_names(value: Any) -> str | None:
+    return None if all(name.strip() for name in value) else "must not contain empty pack names"
+
+
+def _rule_ids(value: Any) -> str | None:
+    bad = [item for item in value if not RULE_ID.fullmatch(item)]
+    return f"not rule ids (like PY-001): {', '.join(bad)}" if bad else None
+
+
 def _command(value: Any) -> str | None:
     if not value:
         return "must not be empty"
@@ -153,6 +167,12 @@ SECTIONS: dict[str, dict[str, Field]] = {
         "max_parallel": Field("int", 2, _between(1, 64), "jobs at once per daemon; 1 to 64"),
         "worktree_root": Field("str", "", None, 'empty = "../<repo>.worktrees"'),
     },
+    "standards": {
+        "packs": Field(
+            "booltable", {}, _pack_names, "pack name = true | false; empty = every pack on"
+        ),
+        "ignore": Field("strlist", [], _rule_ids, 'rule ids switched off here, e.g. ["PY-007"]'),
+    },
     "telemetry": {
         "enabled": Field("bool", False),
     },
@@ -170,6 +190,8 @@ def _type_ok(kind: str, value: Any) -> bool:
         return isinstance(value, str)
     if kind == "strlist":
         return isinstance(value, list) and all(isinstance(item, str) for item in value)
+    if kind == "booltable":
+        return isinstance(value, dict) and all(isinstance(item, bool) for item in value.values())
     return False
 
 
@@ -267,6 +289,11 @@ def default_for(dotted: str) -> object:
     return SECTIONS[section][sub_key].default
 
 
+def _key(key: object) -> str:
+    text = str(key)
+    return text if re.fullmatch(r"[A-Za-z0-9_-]+", text) else toml_value(text)
+
+
 def toml_value(value: object) -> str:
     if isinstance(value, bool):
         return "true" if value else "false"
@@ -276,6 +303,11 @@ def toml_value(value: object) -> str:
         return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
     if isinstance(value, list):
         return "[" + ", ".join(toml_value(item) for item in value) + "]"
+    if isinstance(value, dict):
+        if not value:
+            return "{}"
+        pairs = [f"{_key(k)} = {toml_value(v)}" for k, v in value.items()]
+        return "{ " + ", ".join(pairs) + " }"
     raise TypeError(f"cannot render {type(value).__name__} as TOML")
 
 
