@@ -51,4 +51,9 @@ def test_the_workflow_runs_on_ubuntu_windows_and_macos_with_uv() -> None:
     runs = [str(step.get("run", "")) for step in job["steps"]]
     assert "uv sync --locked" in runs
     # Change, 20 Nov 2026: mutation runs on Ubuntu only (tests/test_pipelines_mutation.py).
-    assert runs[-1] == "uv run python .factory/gates/gate.py ${{ matrix.checks }}"
+    # Change, 20 Nov 2026 (E08 AC-14): the gate saves its JSON report, and the summary and
+    # upload steps follow it (tests/test_evidence_ci.py).
+    assert runs[-3] == (
+        'uv run python .factory/gates/gate.py --json-out "${{ runner.temp }}/gate-report.json"'
+        " ${{ matrix.checks }}"
+    )

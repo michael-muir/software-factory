@@ -86,9 +86,11 @@ def test_both_gate_steps_pass_the_matrix_checks() -> None:
 def test_a_single_os_runs_the_full_gate_unchanged(os_list: tuple[str, ...]) -> None:
     job = _job(os_list)
     assert "include" not in job["strategy"]["matrix"]
+    json_out = '--json-out "${{ runner.temp }}/gate-report.json"'  # E08 AC-14, 20 Nov 2026
+    gate = "uv run python .factory/gates/gate.py"
     assert _gate_runs(job) == [
-        "uv run python .factory/gates/gate.py --base-ref origin/${{ github.base_ref }}",
-        "uv run python .factory/gates/gate.py",
+        f"{gate} --base-ref origin/${{{{ github.base_ref }}}} {json_out}",
+        f"{gate} {json_out}",
     ]
 
 

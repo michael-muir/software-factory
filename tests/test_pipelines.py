@@ -91,22 +91,28 @@ def test_github_workflow_has_exactly_the_expected_steps(stack: str, uv_lock: boo
     data = _yaml(render("github", _spec(stack, uv_lock=uv_lock)))
     steps = _github_steps(data)
     signatures = [_signature(s) for s in steps]
-    gate_pr = f"python {GATE} --base-ref origin/${{{{ github.base_ref }}}}"
-    gate_push = f"python {GATE}"
+    # Change, 20 Nov 2026 (E08 AC-14): each gate step saves its JSON report, and two steps
+    # after them write the job summary and upload the report (tests/test_evidence_ci.py).
+    json_out = '--json-out "${{ runner.temp }}/gate-report.json"'
+    gate_pr = f"python {GATE} --base-ref origin/${{{{ github.base_ref }}}} {json_out}"
+    gate_push = f"python {GATE} {json_out}"
     assert signatures == [
         "actions/checkout@v4",
         "actions/setup-python@v5",
         *GITHUB_SETUP[(stack, uv_lock)],
         gate_pr,
         gate_push,
+        'python .factory/workflow/evidence.py --summary "$RUNNER_TEMP/gate-report.json"'
+        ' >> "$GITHUB_STEP_SUMMARY"',
+        "actions/upload-artifact@v4",
     ]
     assert steps[0]["with"]["fetch-depth"] == 0
     assert str(steps[1]["with"]["python-version"]) == "3.12"
     node = [s for s in steps if s.get("uses") == "actions/setup-node@v4"]
     for step in node:
         assert step["with"]["node-version"] == "lts/*"
-    assert steps[-2]["if"] == "github.event_name == 'pull_request'"
-    assert steps[-1]["if"] == "github.event_name != 'pull_request'"
+    assert steps[-4]["if"] == "github.event_name == 'pull_request'"
+    assert steps[-3]["if"] == "github.event_name != 'pull_request'"
 
 
 @pytest.mark.ac("E07-AC-10")
@@ -122,8 +128,12 @@ def test_github_workflow_triggers_on_pull_requests_and_pushes_to_the_base() -> N
 def test_github_workflow_runs_the_gate_with_python_command() -> None:
     text = render("github", _spec("python", python_command=("uv", "run", "python")))
     signatures = [_signature(s) for s in _github_steps(_yaml(text))]
-    assert signatures[-1] == f"uv run python {GATE}"
-    assert signatures[-2].startswith(f"uv run python {GATE} --base-ref origin/")
+    # Change, 20 Nov 2026 (E08 AC-14): the gate steps come before the summary and upload steps.
+    assert (
+        signatures[-3]
+        == f'uv run python {GATE} --json-out "${{{{ runner.temp }}}}/gate-report.json"'
+    )
+    assert signatures[-4].startswith(f"uv run python {GATE} --base-ref origin/")
 
 
 @pytest.mark.ac("E07-AC-12")
