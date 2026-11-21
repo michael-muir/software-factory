@@ -111,7 +111,8 @@ def _render_pipelines(
     rendered: dict[str, bytes] = {}
     for name, options in sorted(recorded.items()):
         spec = pipelines.spec_for(kit_root, target, options)
-        rendered[pipelines.PROVIDERS[name].path] = pipelines.render(name, spec).encode("utf-8")
+        for path, text in pipelines.PROVIDERS[name].files(spec).items():
+            rendered[path] = text.encode("utf-8")
     return rendered
 
 

@@ -27,7 +27,18 @@ jobs:
       - run: uv sync --locked
       - name: Gate (pull request)
         if: github.event_name == 'pull_request'
-        run: "uv run python .factory/gates/gate.py --base-ref origin/${{ github.base_ref }} ${{ matrix.checks }}"
+        run: "uv run python .factory/gates/gate.py --base-ref origin/${{ github.base_ref }} --json-out \"${{ runner.temp }}/gate-report.json\" ${{ matrix.checks }}"
       - name: Gate
         if: github.event_name != 'pull_request'
-        run: "uv run python .factory/gates/gate.py ${{ matrix.checks }}"
+        run: "uv run python .factory/gates/gate.py --json-out \"${{ runner.temp }}/gate-report.json\" ${{ matrix.checks }}"
+      - name: Gate summary
+        if: always()
+        shell: bash
+        run: "python .factory/workflow/evidence.py --summary \"$RUNNER_TEMP/gate-report.json\" >> \"$GITHUB_STEP_SUMMARY\""
+      - name: Gate report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: "gate-report-${{ matrix.os }}"
+          path: "${{ runner.temp }}/gate-report.json"
+          if-no-files-found: warn

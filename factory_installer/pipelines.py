@@ -31,6 +31,19 @@ MUTATION_OS = "ubuntu"
 HEADER = (
     "Software Factory gate (E07). Rendered by `python install.py ci {name}`; upgrades re-render it."
 )
+# E08, ADR 0026: the gate saves its JSON report where the summary and upload steps find it. An
+# expression, not $RUNNER_TEMP, so it works in each OS's default shell.
+GATE_REPORT = "${{ runner.temp }}/gate-report.json"
+JSON_OUT = f'--json-out "{GATE_REPORT}"'
+SUMMARY_RUN = (
+    'python .factory/workflow/evidence.py --summary "$RUNNER_TEMP/gate-report.json"'
+    ' >> "$GITHUB_STEP_SUMMARY"'
+)
+EVIDENCE_PATH = ".github/workflows/factory-pr-evidence.yml"
+EVIDENCE_HEADER = (
+    "Software Factory PR evidence (E08). Rendered by `python install.py ci github`;"
+    " upgrades re-render it."
+)
 
 
 class PipelineError(Exception):
@@ -128,13 +141,74 @@ def render_github(spec: PipelineSpec) -> str:
             "      - run: npm ci",
         ]
     matrix = ("${{ matrix.checks }}",) if several else ()
+    pull = spec.gate("--base-ref", "origin/${{ github.base_ref }}", JSON_OUT, *matrix)
     lines += [
         "      - name: Gate (pull request)",
         "        if: github.event_name == 'pull_request'",
-        f"        run: {_q(spec.gate('--base-ref', 'origin/${{ github.base_ref }}', *matrix))}",
+        f"        run: {_q(pull)}",
         "      - name: Gate",
         "        if: github.event_name != 'pull_request'",
-        f"        run: {_q(spec.gate(*matrix))}",
+        f"        run: {_q(spec.gate(JSON_OUT, *matrix))}",
+        "      - name: Gate summary",
+        "        if: always()",
+        "        shell: bash",
+        f"        run: {_q(SUMMARY_RUN)}",
+        "      - name: Gate report",
+        "        if: always()",
+        "        uses: actions/upload-artifact@v4",
+        "        with:",
+        '          name: "gate-report-${{ matrix.os }}"',
+        f"          path: {_q(GATE_REPORT)}",
+        "          if-no-files-found: warn",
+    ]
+    return "\n".join(lines) + "\n"
+
+
+READ_BODY = """python - <<'PY'
+import json, os, pathlib
+event = json.loads(pathlib.Path(os.environ["GITHUB_EVENT_PATH"]).read_text(encoding="utf-8"))
+body = (event.get("pull_request") or {}).get("body") or ""
+pathlib.Path(os.environ["RUNNER_TEMP"], "pr-body.md").write_text(body, encoding="utf-8")
+PY"""
+CHECK_BODY = (
+    'python .factory/workflow/docs.py --root . check-pr --strict "$RUNNER_TEMP/pr-body.md"'
+    ' --commits $(git rev-list "$BASE..$HEAD")'
+)
+
+
+def _block(text: str, indent: str) -> list[str]:
+    return [f"{indent}{line}" if line else "" for line in text.split("\n")]
+
+
+def render_github_evidence(spec: PipelineSpec) -> str:
+    """factory-pr-evidence.yml: checks every PR body (E08 AC-12, ADR 0026). The same for every
+    stack: it needs Python alone, and reads the body from the event file, never an expression."""
+    lines = [
+        f"# {EVIDENCE_HEADER}",
+        "name: factory-pr-evidence",
+        "on:",
+        "  pull_request:",
+        "    types: [opened, edited, synchronize, reopened]",
+        "permissions:",
+        "  contents: read",
+        "jobs:",
+        "  pr-evidence:",
+        "    runs-on: ubuntu-latest",
+        "    steps:",
+        "      - uses: actions/checkout@v4",
+        "        with:",
+        "          fetch-depth: 0",
+        "      - uses: actions/setup-python@v5",
+        "        with:",
+        f"          python-version: {_q(PYTHON_VERSION)}",
+        "      - name: Read the PR body",
+        "        run: |",
+        *_block(READ_BODY, "          "),
+        "      - name: Check the PR evidence",
+        "        env:",
+        "          BASE: ${{ github.event.pull_request.base.sha }}",
+        "          HEAD: ${{ github.event.pull_request.head.sha }}",
+        f"        run: {_q(CHECK_BODY)}",
     ]
     return "\n".join(lines) + "\n"
 
@@ -309,6 +383,12 @@ class Provider:
     path: str
     turn_on: str
     render: Callable[[PipelineSpec], str]
+    # Further files the provider renders from the same spec: (path, renderer). GitHub only (E08).
+    extra: tuple[tuple[str, Callable[[PipelineSpec], str]], ...] = ()
+
+    def files(self, spec: PipelineSpec) -> dict[str, str]:
+        """Every file this provider writes, path to text."""
+        return {self.path: self.render(spec), **{path: r(spec) for path, r in self.extra}}
 
 
 PROVIDERS: dict[str, Provider] = {
@@ -316,6 +396,7 @@ PROVIDERS: dict[str, Provider] = {
         ".github/workflows/factory-gate.yml",
         "GitHub Actions runs it on the next push or pull request: nothing else to do.",
         render_github,
+        ((EVIDENCE_PATH, render_github_evidence),),
     ),
     "gitlab": Provider(
         ".gitlab/factory-gate.yml",
@@ -333,7 +414,11 @@ PROVIDERS: dict[str, Provider] = {
         render_jenkins,
     ),
 }
-PIPELINE_PATHS = frozenset(provider.path for provider in PROVIDERS.values())
+PIPELINE_PATHS = frozenset(
+    path
+    for provider in PROVIDERS.values()
+    for path in (provider.path, *(extra for extra, _ in provider.extra))
+)
 
 
 def render(name: str, spec: PipelineSpec) -> str:
