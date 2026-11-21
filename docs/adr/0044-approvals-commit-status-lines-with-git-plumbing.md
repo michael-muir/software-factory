@@ -1,6 +1,6 @@
 # 0044 · Approvals commit status lines with git plumbing, without a checkout
 
-Status: Proposed · Date: 2026-11-21 · Epic: E13
+Status: Accepted · Date: 2026-11-21 · Epic: E13
 
 ## Context
 

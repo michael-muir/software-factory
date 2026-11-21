@@ -1,6 +1,6 @@
 # 0043 · The driver opens PRs through a small forge interface, and only after check-pr --strict
 
-Status: Proposed · Date: 2026-11-21 · Epic: E13
+Status: Accepted · Date: 2026-11-21 · Epic: E13
 
 ## Context
 
@@ -15,7 +15,7 @@ The ship stage turns a reviewed slice into a PR with E08's evidence, and the mer
   `pipeline.forge` chooses between them.
 
 - **The ship stage runs in this order:**
-  1. The Integrator writes the body to `FACTORY_PR_BODY` in the job folder, by following the pull-request-evidence skill.
+  1. The Integrator writes the body to `FACTORY_PR_BODY` in the worktree's git dir, by following the pull-request-evidence skill.
   2. The driver runs `docs.py check-pr --strict --commits <the branch's commits>`.
   3. It pushes the branch to `factory/<job>-t<n>`.
   4. It calls `Forge.open`.

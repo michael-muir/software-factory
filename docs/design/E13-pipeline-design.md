@@ -1,7 +1,7 @@
 # E13 · Full-track pipeline design note
 
 Spec: [E13 spec](../specs/E13-full-track-pipeline.md) · Issue: [#13](https://github.com/michael-muir/software-factory/issues/13)
-Status: **Proposed, awaiting product owner acceptance** · ADRs: [0040](../adr/0040-a-stage-passes-only-by-a-check-over-committed-files.md) · [0041](../adr/0041-the-driver-is-a-resumable-step-machine-under-the-e18-lease.md) · [0042](../adr/0042-a-role-session-is-a-templated-command-held-by-an-allow-list-and-the-hook.md) · [0043](../adr/0043-the-driver-opens-prs-through-a-forge-only-after-check-pr-strict.md) · [0044](../adr/0044-approvals-commit-status-lines-with-git-plumbing.md)
+Status: **Accepted by the product owner, 21 Nov 2026** · ADRs: [0040](../adr/0040-a-stage-passes-only-by-a-check-over-committed-files.md) · [0041](../adr/0041-the-driver-is-a-resumable-step-machine-under-the-e18-lease.md) · [0042](../adr/0042-a-role-session-is-a-templated-command-held-by-an-allow-list-and-the-hook.md) · [0043](../adr/0043-the-driver-opens-prs-through-a-forge-only-after-check-pr-strict.md) · [0044](../adr/0044-approvals-commit-status-lines-with-git-plumbing.md)
 
 ## Summary
 
@@ -19,7 +19,7 @@ There is one new kit module, `.factory/workflow/pipeline.py`, standard library o
 
    Each has a real version that calls a command line and a fake for the fast tests.
 
-Everything the pipeline keeps is in `<git-common-dir>/factory/work/<job>/`, beside E18's `work/<job>.toml`. E18's record and lease are the job; the pipeline record holds the stages, approvals, runner jobs and PRs.
+Everything the pipeline keeps is in two E18 sidecars beside E18's `work/<job>.toml`: `work/<job>.pipeline.toml` and, at the end, `work/<job>.summary.toml`. Both are written with `jobs.write_sidecar` while holding the lease. E18's record and lease are the job; the pipeline record holds the stages, approvals, runner jobs, gate reports and PRs.
 
 ## Source layout
 
@@ -36,7 +36,7 @@ tests/test_pipeline_*.py               # one file per slice
 pyproject.toml                         # pipeline.py is under kit/.factory/workflow, already on the paths
 ```
 
-`pipeline.py` loads its siblings by path, as `evidence.py` does: `state.py` (task files, findings, handoffs), `docs.py` (`check`, `check-pr`), `evidence.py` (AC tags in locked files) and `agents.py` (role cards and E12's Claude Code tool names). It calls `run.py` and `jobs.py` only through their command lines, so E23's transport and E18's internals can change without touching it.
+`pipeline.py` loads its siblings by path, as `evidence.py` does: `state.py` (task files, findings, handoffs), `docs.py` (`check`, `check-pr`), `evidence.py` (AC tags in locked files) and `agents.py` (role cards and E12's Claude Code tool names). It calls `run.py` only through its command line, so E23's transport works unchanged. It calls E18's `jobs.py` through the Python API that E18's design pins as a contract (`new_job`, `read_job`, `set_job`, `claim`, `beat`, `release`, `lease_state`, `sidecar_path`, `write_sidecar`), loaded by path.
 
 ## The stage table
 
@@ -76,17 +76,17 @@ A checkpoint that isn't in `pipeline.checkpoints` is skipped (only `design` can 
 | design | one `docs/design/<EPIC>-*.md`, committed and lint-clean; at least one `.agentic/tasks/<EPIC>-T<n>.md` that `state.py check` accepts. Each task's ACs are read from its `## Acceptance criteria` section: every `AC-nn`, with `AC-aa to AC-bb` expanded. Every one of them is in the spec, and every spec AC is in at least one task. |
 | test   | `.agentic/locks/<task>.toml` is committed. Every AC the task names is tagged `<EPIC>-AC-nn` in a locked file (`evidence.trace_file`). The commit that adds the lock record is the first commit after `base` that changes a file outside `.agentic/` (so no code change comes before the lock).                                       |
 | build  | at least one commit after the lock commit; `git status --porcelain` is empty; `agents.py check` passes (the lock hashes hold)                                                                                                                                                                                                        |
-| gate   | the newest gate JSON for the task, in the job folder, has `verdict = "pass"`, `commit` equal to `head` and `dirty = false`                                                                                                                                                                                                           |
+| gate   | the newest gate report for the task, in the record (or `--gate-report PATH`), has `verdict = "pass"`, `commit` equal to `head` and `dirty = false`                                                                                                                                                                                   |
 | review | the record shows all six review sessions finished for this task; the task's `review_round` is 1; no finding of severity `blocker` or `major` has status `open`                                                                                                                                                                       |
 | docs   | `git diff base..head -- CHANGELOG.md` adds a line inside the `## [Unreleased]` section; the gate check holds again for the new `head`                                                                                                                                                                                                |
 | ship   | the body file passes `docs.py --root <checkout> check-pr --strict <body> --commits <rev-list base..head>`; the forge reports the PR open with head = the pushed branch                                                                                                                                                               |
-| learn  | every task has `merged = true` in the record; `summary.toml` and `handoff.md` exist and the handoff has E02's three headings                                                                                                                                                                                                         |
+| learn  | every task has `merged = true` in the record; the `summary` sidecar exists and its `handoff` text has E02's three headings                                                                                                                                                                                                           |
 
-`pipeline.py check <stage> --worktree PATH --epic E [--task T] [--base REF]` builds a `Checkout` directly. For the gate, review and ship checks, which also need the record, it reads the job folder named by `--job`, if given. `check <job> [stage]` builds the `Checkout` from the record: the current runner job's worktree, or, if that has gone, a temporary detached worktree of the branch under the job folder, removed afterwards.
+`pipeline.py check <stage> --worktree PATH --epic E [--task T] [--base REF]` builds a `Checkout` directly. For the gate, review and ship checks, which also need the record, it reads the record of the job named by `--job`, or takes `--gate-report PATH` and `--pr-body PATH`. `check <job> [stage]` builds the `Checkout` from the record: the current runner job's worktree, or, if that has gone, a temporary detached worktree of the branch in the system temp folder, removed afterwards.
 
 ## The records
 
-`work/<job>/pipeline.toml`, written atomically (temp file and `os.replace`, with the Windows retry from ADR 0030):
+`work/<job>.pipeline.toml`, an E18 sidecar, written with `jobs.write_sidecar` (atomic, and only while holding the lease):
 
 ```toml
 version = 1
@@ -130,12 +130,13 @@ at = 2026-11-21T11:00:00Z
 note = "Answer to Q1: option A."
 ```
 
-The job folder also holds:
+The record also holds, as TOML strings:
 
-- `request.md`: the request, from `--request-file` or the issue
-- `gate-<task>-<n>.json`: each gate report
-- `pr-<task>.md`: the PR body, the `FACTORY_PR_BODY` path
-- `summary.toml` and `handoff.md`: written at the learn stage
+- `request`: the request, from `--request-file` or the issue
+- `[[gates]]`: each gate run's task, commit, verdict and full JSON report
+- the PR body of each task, under `[[tasks]]`
+
+Files that a command has to write go to the runner worktree's own git dir, `git rev-parse --git-path factory-pipeline` (for example `<common>/worktrees/<name>/factory-pipeline/`). They are `gate-<n>.json` and `pr-body.md`. Git never tracks them, they never make the tree dirty, and they go away with the worktree. The driver reads each one into the record as soon as its command finishes. The learn stage writes a second sidecar, `work/<job>.summary.toml`, which holds the summary and the closing handoff's text.
 
 Stage times and costs in `status` and the summary are worked out from `[[sessions]]`.
 
@@ -153,7 +154,7 @@ Stage times and costs in `status` and the summary are worked out from `[[session
 - **A command is outstanding** (the newest `[[sessions]]` entry has no `exit_code`). Poll `run.py status <run> --json`. If the command has finished, record its exit code, read `total_cost_usd` from its log, report it with `run.py usage`, and record it. If the runner job is `halted` or `failed`, the pipeline needs a human, with the runner's reason. Otherwise sleep 1 second.
 - **The stage's sessions aren't all done.** Make sure a runner job is open for the scope. If not, submit `run.py submit --open --id <job>-<p|tN>-<k> --base <ref> --task <task>`, set the E18 job's branch and worktree, and then send the next session.
 - **All sessions are done.** Run the stage's check. Failing problems make the job `needs-human`, with the problems as the reason. The gate is the exception: the Debugger and the gate run again, up to `gate_retries` times.
-- **The check passed.** If the stage has a configured checkpoint, close the runner job, set the status to `awaiting-approval` or `awaiting-merge`, and return a wait point. If not, set `stage = next_stage(...)`, update E18's `phase` and `task`, and go on.
+- **The check passed.** If the stage has a configured checkpoint, close the runner job, set the status to `awaiting-approval` or `awaiting-merge` (and E18's to `blocked`), and return a wait point. If not, set `stage = next_stage(...)`, update E18's `phase` and `task`, and go on.
 
 Every write to the record happens before the action it describes is confirmed: the `[[sessions]]` entry is written, then `run.py send` runs. So a crash between the two never sends a command twice. On restart, a session entry with no matching runner command (`status --json` shows fewer commands than `index`) is sent again; otherwise it's waited for.
 
@@ -164,7 +165,7 @@ Every write to the record happens before the action it describes is confirmed: t
 | What            | argv                                                                                                                                 |
 | --------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
 | a role session  | `session_argv(role, prompt)`, with `FACTORY_ROLE`, `FACTORY_PR_BODY` and `FACTORY_GATE_REPORT` passed through `env` (below)          |
-| the gate        | `gates.python_command + [".factory/gates/gate.py", "--json-out", "<job folder>/gate-<task>-<n>.json"]`                               |
+| the gate        | `gates.python_command + [".factory/gates/gate.py", "--json-out", "<scratch>/gate-<n>.json"]`                                         |
 | findings commit | `git add .agentic/tasks/<task>.md`, then `git commit -m "chore(<task>): review findings from <role>"`, sent only if the file changed |
 | push            | `git push origin HEAD:refs/heads/factory/<job>-t<n>`                                                                                 |
 
@@ -272,14 +273,18 @@ Each slice ships on its own:
 - **T3** drives each slice to a merged PR.
 - **T4** proves the whole line, live.
 
+## Changes
+
+- **21 Nov 2026, after acceptance, aligned with E18's accepted design:** the pipeline record is E18's sidecar `work/<job>.pipeline.toml`, not a `work/<job>/` folder. The summary is a second sidecar, `work/<job>.summary.toml`. Request, gate reports and PR bodies live inside the record. Scratch files live in the runner worktree's git dir. The `Jobs` port uses E18's pinned Python API rather than its command line, and the E18 status is `blocked` while awaiting approval or a merge.
+
 ## Risks
 
 - **E18's interface isn't merged yet.** T2 uses only `jobs.py new`, `claim`, `beat`, `release`, `set` and `show`, from E18's approved spec, behind the `Jobs` port. If E18-T1's command lines differ, only `CliJobs` changes. T1 doesn't touch E18 at all, so it can merge first.
-- **E18 globbing `work/`.** E18's records are `work/<id>.toml`. E13 uses the folder `work/<id>/`, which a `*.toml` glob doesn't match. E18's architect should know that the folder is taken (I've raised it with the orchestrator).
+- **E18's sidecars.** E13 writes only `work/<id>.pipeline.toml` and `work/<id>.summary.toml`, through `jobs.write_sidecar`, and creates no folders under `work/`. Gate reports and PR bodies are copied into the record, so a large report makes the record larger: a few tens of KB a gate run, which is fine for TOML.
 - **The E16 time cap.** A runner job's timeout counts waiting, so the driver ends a segment at every wait point. A single long slice (nine sessions, gate retries) could still pass the default 120 minutes. The halt then makes the job `needs-human`, and `resume` carries on in a new segment from the branch. This repo can raise `runner.job_timeout_minutes` for the live run.
 - **The E16 turn cap.** A slice uses about 20 turns: six reviewers, up to six findings commits, the gate and its retries, docs, ship and push. That's inside the default 50. Each segment gets a fresh count.
 - **Headless agents are less reliable than a supervised session.** Every stage ends in a deterministic check, so a session that claims success without the files fails its check and stops for a human. The live run (T4) is where the prompts get tuned.
 - **Claude Code flags change between versions.** `--permission-prompts` needs v2.1.259 or later, and this machine has 2.1.330. The template is config, so a repo can adjust it without a kit change. T1 records the version it was checked against in `pipeline.md`.
-- **Writing outside the worktree.** The Integrator has no edit tools. It writes `FACTORY_PR_BODY` (in the job folder, outside the worktree, so the gate's tree stays clean) through `evidence.py --out` and its shell. That is allowed by its bare `Bash` rule, and the E03 hook checks it.
+- **Writing outside the worktree.** The Integrator has no edit tools. It writes `FACTORY_PR_BODY` (in the worktree's git dir, so the gate's tree stays clean) through `evidence.py --out` and its shell. That is allowed by its bare `Bash` rule, and the E03 hook checks it.
 - **Mutation and slow tests.** The end-to-end and real-port tests are marked `slow`. The in-process check and driver tests have to reach the 60% changed-lines threshold on their own.
 - **E01 and the kit list change.** The test commits update `tests/_repo.py` KIT_FILES and E01's expected default config, and the PRs flag it.

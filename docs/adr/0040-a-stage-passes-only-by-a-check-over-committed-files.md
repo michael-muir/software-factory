@@ -1,6 +1,6 @@
 # 0040 · A stage passes only by a check over committed files, from one stage table
 
-Status: Proposed · Date: 2026-11-21 · Epic: E13
+Status: Accepted · Date: 2026-11-21 · Epic: E13
 
 ## Context
 

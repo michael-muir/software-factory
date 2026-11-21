@@ -1,6 +1,6 @@
 # 0042 · A role session is a templated command, held by an allow-list from its card and by the E03 hook
 
-Status: Proposed · Date: 2026-11-21 · Epic: E13
+Status: Accepted · Date: 2026-11-21 · Epic: E13
 
 ## Context
 

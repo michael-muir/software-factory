@@ -77,15 +77,15 @@ E13 runs one job through one track. E14 adds the review loop, E15 the lite track
 
 ## Where things live
 
-| What                             | Where                                                                                        |
-| -------------------------------- | -------------------------------------------------------------------------------------------- |
-| The full track, for people       | `.factory/workflow/pipeline.md` (kit file)                                                   |
-| The tool                         | `.factory/workflow/pipeline.py` (kit file)                                                   |
-| The job (E18's record)           | `<git-common-dir>/factory/work/<job>.toml`, owned by E18's `jobs.py`                         |
-| The job's pipeline record        | `<git-common-dir>/factory/work/<job>/pipeline.toml`, beside the job, never tracked by git    |
-| Approvals, rejections, PR bodies | `<git-common-dir>/factory/work/<job>/`                                                       |
-| Job summary and closing handoff  | `<git-common-dir>/factory/work/<job>/summary.toml` and `handoff.md`                          |
-| Runner jobs                      | E16's own records, ids `<job>-plan` and `<job>-t<n>`, each run with `--task` set to its task |
+| What                            | Where                                                                                                                              |
+| ------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| The full track, for people      | `.factory/workflow/pipeline.md` (kit file)                                                                                         |
+| The tool                        | `.factory/workflow/pipeline.py` (kit file)                                                                                         |
+| The job (E18's record)          | `<git-common-dir>/factory/work/<job>.toml`, owned by E18's `jobs.py`                                                               |
+| The job's pipeline record       | E18 sidecar `<git-common-dir>/factory/work/<job>.pipeline.toml`: stages, decisions, PRs, the request, each gate report and PR body |
+| Job summary and closing handoff | E18 sidecar `<git-common-dir>/factory/work/<job>.summary.toml`, the handoff text inside it                                         |
+| Scratch files of a runner job   | the worktree's own git dir, `git rev-parse --git-path factory-pipeline`: never tracked, never dirty, gone with the worktree        |
+| Runner jobs                     | E16's own records, ids `<job>-plan` and `<job>-t<n>`, each run with `--task` set to its task                                       |
 
 ## New `config.toml` keys
 
@@ -126,7 +126,7 @@ This repo's `.agentic/config.toml` sets `checkpoints = ["spec", "design", "merge
 **The driver**
 
 - **AC-06** `pipeline.py run <job> [--session S]` takes the job from where it stands to the next human checkpoint, or to the end.
-  - It first claims the job with E18's lease (`jobs.py claim`), and refuses with exit 1, changing nothing, while another session holds a live lease. It beats (`jobs.py beat`) at least once per `jobs.lease_minutes / 3` while it runs, and releases the lease when it stops. It keeps the E18 job's `phase`, `task`, `branch` and `worktree` current with `jobs.py set`, sets its `status` to `blocked` while the pipeline needs a human, and to `done` or `cancelled` at the end. Every runner job it submits has `--task` set to one of the job's tasks, so it belongs to the job.
+  - It first claims the job with E18's lease (`jobs.py claim`), and refuses with exit 1, changing nothing, while another session holds a live lease. It beats (`jobs.py beat`) at least once per `jobs.lease_minutes / 3` while it runs, and releases the lease when it stops. It keeps the E18 job's `phase`, `task`, `branch` and `worktree` current with `jobs.py set`, sets its `status` to `blocked` while the pipeline waits for a human (`needs-human`, `awaiting-approval` or `awaiting-merge`), and to `done` or `cancelled` at the end. Every runner job it submits has `--task` set to one of the job's tasks, so it belongs to the job.
   - It submits the plan job and the slice jobs to the E16 queue with `run.py submit --open --task <task>`, sends each role's session to them with `run.py send`, waits for each command through `run.py status`, and closes each runner job once its stage is over.
   - It exits 0 when it stops at a checkpoint or at the end, and 1 when it stops for a human.
   - Run again, it carries on from the record and never repeats a stage that has passed.
@@ -156,14 +156,14 @@ This repo's `.agentic/config.toml` sets `checkpoints = ["spec", "design", "merge
 
 **Gate, review, docs and ship**
 
-- **AC-12** **Gate.** The driver itself runs the full gate as a runner command, with `--json-out` to a file in the job's folder. On a red report, it sends the `debugger` the report, then runs the gate again, up to `pipeline.gate_retries` times. If the gate is still red, the job stops for a human with the failing checks.
+- **AC-12** **Gate.** The driver itself runs the full gate as a runner command, with `--json-out` to a scratch file, and keeps the report in the pipeline record. On a red report, it sends the `debugger` the report, then runs the gate again, up to `pipeline.gate_retries` times. If the gate is still red, the job stops for a human with the failing checks.
 - **AC-13** **Review.** The driver sends the `verifier`, then the five reviewers in the table's order, each in its own session. After each session, the driver commits the task file's findings on the slice branch, because the reviewers can't commit. Then it sets the task's `review_round` to 1. Any open finding of blocker or major severity stops the job as `needs-human`, and the reason lists the findings. Minor findings go on to ship and appear in the PR body.
 - **AC-14** **Docs.** The `docs-writer` adds the change's entry under `## [Unreleased]` in `CHANGELOG.md`. If the stage adds a commit, the driver runs the full gate again on the new head before ship. The ship stage uses that report.
 - **AC-15** **Ship.**
   - The `integrator` follows the pull-request-evidence skill and writes the filled-in PR body to the path in `FACTORY_PR_BODY`. The driver then checks it with `docs.py check-pr --strict --commits <the branch's commits>`, and a body that fails stops the job for a human.
   - Next the driver pushes the branch and opens the PR, base `<base_ref>`, head the slice branch:
     - **`forge = "github"`:** through `gh api repos/<owner>/<repo>/pulls` (REST, never GraphQL).
-    - **`forge = "git"`:** the PR is the pushed branch, with the body saved in the job's folder.
+    - **`forge = "git"`:** the PR is the pushed branch, with the body kept in the pipeline record.
   - The record keeps the PR's number or branch.
 - **AC-16** **Merge.** `run` on an `awaiting-merge` job checks whether a human has merged the PR.
   - **`forge = "github"`:** the REST pulls endpoint says `merged: true`.
@@ -173,9 +173,9 @@ This repo's `.agentic/config.toml` sets `checkpoints = ["spec", "design", "merge
 
 **Learn**
 
-- **AC-17** After the last task's merge, the learn stage writes `summary.toml` and `handoff.md`, then marks the job `done`.
-  - `summary.toml` holds the job, each stage's times and cost, each gate run's verdict, each finding, each PR, and the total cost.
-  - `handoff.md` has `## Done`, `## Next` and `## Open questions`, in E02's handoff form, and says what shipped and what's left.
+- **AC-17** After the last task's merge, the learn stage writes the `summary` sidecar, then marks the job `done`.
+  - It holds the job, each stage's times and cost, each gate run's verdict, each finding, each PR, and the total cost.
+  - Its `handoff` text has `## Done`, `## Next` and `## Open questions`, in E02's handoff form, and says what shipped and what's left.
 
   `pipeline.py status` shows both.
 
@@ -209,7 +209,7 @@ This repo's `.agentic/config.toml` sets `checkpoints = ["spec", "design", "merge
 6. **The spec interview is asynchronous.** A headless Spec Writer can't ask questions as it goes. It writes the draft spec with its questions as assumptions and options, and the product owner answers with `reject --note` (another round) or `approve`.
 7. **The default agent command doesn't bypass permissions** (changed at approval, see Changes). It uses `--permission-mode acceptEdits` and `--permission-prompts none`, with an `--allowedTools` list generated from the role's card (AC-07). Anything else that would prompt is denied. The E03 hook and the E16 caps still apply on top, so there are two layers.
 8. **The first slice carries the plan.** The spec, the design and the task files reach main in the first slice's PR, as they have in this repo, not in a separate PR.
-9. **There is one job, and E18 owns it** (replaced at approval, see Changes). E18's record, `<git-common-dir>/factory/work/<id>.toml`, with its id and lease, is the job. The pipeline keeps its stages, approvals and PRs in `work/<id>/pipeline.toml`, beside it and keyed by the same id. The driver claims the job with E18's lease and beats while it runs. E18's T1 (the record, `new`, `claim` and `beat`) merges before E13's driver slice, so E13 builds and merges its stage machine first.
+9. **There is one job, and E18 owns it** (replaced at approval, see Changes). E18's record, `<git-common-dir>/factory/work/<id>.toml`, with its id and lease, is the job. The pipeline keeps its stages, approvals and PRs in E18's sidecar `work/<id>.pipeline.toml`, beside it and keyed by the same id, written with `jobs.write_sidecar` while holding the lease. The driver claims the job with E18's lease and beats while it runs. E18's T1 (the record, `new`, `claim` and `beat`) merges before E13's driver slice, so E13 builds and merges its stage machine first.
 10. **Gate retries.** A red gate gets up to `gate_retries` Debugger sessions (2 by default), each bounded by E16's caps. This is the one automatic retry in E13, and it isn't a review round.
 11. **The live run's epic id.** The live job on #82 takes the next free epic id (E31), so its spec and AC tags can't clash with E08's.
 12. **Reviewers all run on one model** until E20, so `different_from` isn't honoured yet. Strict reviewer isolation is E14's.
@@ -217,7 +217,8 @@ This repo's `.agentic/config.toml` sets `checkpoints = ["spec", "design", "merge
 ## Changes
 
 - **21 Nov 2026, at approval, by the product owner (assumption 7, AC-07, config):** for security, the default agent command no longer uses `--permission-mode bypassPermissions`. It uses `--permission-mode acceptEdits` and `--permission-prompts none`, with an `--allowedTools` list generated from each role's card: its tools, and its run scopes as `Bash(<prefix> *)` and `PowerShell(<prefix> *)` rules. That is Claude Code's documented rule form (code.claude.com/docs/en/permissions: a space before the trailing `*` gives prefix matching, `:*` is an older equivalent, and a compound command must match each part). The E03 hook and the E16 caps stay on top, so a role is held by two layers. AC-07 gains the allow-list and a test that pins it, and `{allowed_tools}` becomes a template placeholder.
-- **21 Nov 2026, at approval, by the product owner (assumption 9, AC-02, AC-03, AC-06, AC-10):** there is one job, and E18 owns it. `pipeline.py new` creates the E18 job, and the pipeline's own record lives beside it in `work/<id>/`. `run`, `approve`, `reject`, `resume` and `cancel` hold E18's lease while they write, and the driver beats while it runs. E13's driver slice waits for E18's T1 to merge. AC-04 also gains a form that checks any checkout without a job, so the stage machine can be built and merged first.
+- **21 Nov 2026, at approval, by the product owner (assumption 9, AC-02, AC-03, AC-06, AC-10):** there is one job, and E18 owns it. `pipeline.py new` creates the E18 job, and the pipeline's own record lives beside it (as the sidecar `work/<id>.pipeline.toml`, see the next note). `run`, `approve`, `reject`, `resume` and `cancel` hold E18's lease while they write, and the driver beats while it runs. E13's driver slice waits for E18's T1 to merge. AC-04 also gains a form that checks any checkout without a job, so the stage machine can be built and merged first.
+- **21 Nov 2026, after design acceptance, aligned with E18's accepted design (AC-12, AC-15, AC-17, where things live):** E18 keeps other epics' data in sidecar files, `work/<id>.<name>.toml`, written with `jobs.write_sidecar` while holding the lease, and its rebuild knows no `work/<id>/` folder. So the pipeline record is `work/<id>.pipeline.toml`, and the learn stage's summary and handoff are one more sidecar, `work/<id>.summary.toml`. The request, the gate reports and the PR bodies are kept inside the pipeline record. Files a command has to write (the gate's `--json-out`, `FACTORY_PR_BODY`) go to the worktree's own git dir, and the driver reads them into the record. The E18 job's status is `blocked` at the two awaiting statuses too, as E18's design maps them.
 - **21 Nov 2026, at approval (assumption 4):** confirmed that the driver opens the PR, and only after the Integrator's body passes `check-pr --strict`.
 
 ## Notes for the Architect (design, not requirements)

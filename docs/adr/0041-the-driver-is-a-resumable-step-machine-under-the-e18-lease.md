@@ -1,6 +1,6 @@
 # 0041 · The driver is a resumable step machine under the E18 lease, and ends a runner job at every wait
 
-Status: Proposed · Date: 2026-11-21 · Epic: E13
+Status: Accepted · Date: 2026-11-21 · Epic: E13
 
 ## Context
 
@@ -12,7 +12,7 @@ A full-track job lasts hours or days: it waits for a human to approve the spec a
 
 ## Decision
 
-- **The pipeline's own record** is `<git-common-dir>/factory/work/<job>/pipeline.toml`, beside E18's `work/<job>.toml`, written atomically. It holds the status, stage, task, tasks and PRs, the runner jobs, every command sent (with its exit code and cost), and every decision.
+- **The pipeline's own record** is E18's sidecar `<git-common-dir>/factory/work/<job>.pipeline.toml`, beside E18's `work/<job>.toml`, written atomically with `jobs.write_sidecar` while holding the lease. It holds the status, stage, task, tasks and PRs, the runner jobs, every command sent (with its exit code and cost), and every decision.
 - **`Driver.step()` does one action:**
   - collect a finished command;
   - submit a runner job;
