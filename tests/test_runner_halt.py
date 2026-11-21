@@ -352,7 +352,7 @@ def test_a_stop_from_before_the_daemon_started_does_not_stop_it(
 def test_ctrl_c_halts_the_running_jobs_and_the_daemon_exits_0(
     repo: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    job, start, _, daemon = running(repo, monkeypatch, capsys, "--", *PY)
+    job, start, clock, daemon = running(repo, monkeypatch, capsys, "--", *PY)
     queued = submit(repo, monkeypatch, capsys, "--", *PY)
     real_tick = daemon.tick
     ticks: list[int] = []
@@ -361,7 +361,7 @@ def test_ctrl_c_halts_the_running_jobs_and_the_daemon_exits_0(
         ticks.append(1)
         if len(ticks) > 1:
             raise KeyboardInterrupt
-        real_tick(now)
+        real_tick(clock.now)
 
     monkeypatch.setattr(daemon, "tick", tick)
     assert daemon.run() == 0

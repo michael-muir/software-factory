@@ -1,0 +1,14 @@
+task = "E16-T4"
+locked = 2026-11-21T04:49:25Z
+
+[[files]]
+path = "tests/test_runner_caps.py"
+sha256 = "91c78359b52119fdad707dc6ecd03dd10ca19fe8ac9837cdc5c116d64156d61c"
+
+[[files]]
+path = "tests/test_runner_capped.py"
+sha256 = "e646e0b4474daef9891391b869e37407e186dd6df6b5780b220bb8be67149968"
+
+[[files]]
+path = "tests/test_runner_coverage.py"
+sha256 = "f8d9ce767e1418a10d9cbf7031362e932f75ff2081ee5957418338adc040d8ec"
