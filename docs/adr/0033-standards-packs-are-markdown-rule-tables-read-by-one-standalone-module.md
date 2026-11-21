@@ -1,6 +1,6 @@
 # 0033 · Standards packs are Markdown rule tables with TOML front matter, read by one standalone module
 
-Status: Proposed · Date: 2026-11-21 · Epic: E11
+Status: Accepted · Date: 2026-11-21 · Epic: E11
 
 ## Context
 

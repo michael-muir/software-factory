@@ -1,6 +1,6 @@
 # 0035 · Which rules apply to a change is computed from globs, markers and config, never judged
 
-Status: Proposed · Date: 2026-11-21 · Epic: E11
+Status: Accepted · Date: 2026-11-21 · Epic: E11
 
 ## Context
 

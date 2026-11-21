@@ -1,6 +1,6 @@
 # 0037 · Pack content is in our own words and leaves tool-enforced rules to the gate; review checks this, tests check the shape
 
-Status: Proposed · Date: 2026-11-21 · Epic: E11
+Status: Accepted · Date: 2026-11-21 · Epic: E11
 
 ## Context
 

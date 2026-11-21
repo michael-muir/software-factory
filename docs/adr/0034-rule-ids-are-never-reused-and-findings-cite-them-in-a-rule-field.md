@@ -1,6 +1,6 @@
 # 0034 · Rule ids are never reused, and findings cite them in a `rule` field checked when written
 
-Status: Proposed · Date: 2026-11-21 · Epic: E11
+Status: Accepted · Date: 2026-11-21 · Epic: E11
 
 ## Context
 

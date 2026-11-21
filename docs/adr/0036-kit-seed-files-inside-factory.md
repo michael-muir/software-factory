@@ -1,6 +1,6 @@
 # 0036 · A kit can ship seed files inside `.factory/`, created once and never managed
 
-Status: Proposed · Date: 2026-11-21 · Epic: E11
+Status: Accepted · Date: 2026-11-21 · Epic: E11
 
 ## Context
 

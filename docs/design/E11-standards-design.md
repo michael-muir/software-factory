@@ -1,7 +1,7 @@
 # E11 · Standards packs design note
 
 Spec: [E11 spec](../specs/E11-standards-packs.md) · Issue: [#11](https://github.com/michael-muir/software-factory/issues/11)
-Status: **Proposed, awaiting product owner acceptance** · ADRs: [0033](../adr/0033-standards-packs-are-markdown-rule-tables-read-by-one-standalone-module.md) · [0034](../adr/0034-rule-ids-are-never-reused-and-findings-cite-them-in-a-rule-field.md) · [0035](../adr/0035-which-rules-apply-is-computed-from-globs-markers-and-config.md) · [0036](../adr/0036-kit-seed-files-inside-factory.md) · [0037](../adr/0037-pack-content-is-our-own-words-checked-in-review.md)
+Status: **Accepted by the product owner, 21 Nov 2026** · ADRs: [0033](../adr/0033-standards-packs-are-markdown-rule-tables-read-by-one-standalone-module.md) · [0034](../adr/0034-rule-ids-are-never-reused-and-findings-cite-them-in-a-rule-field.md) · [0035](../adr/0035-which-rules-apply-is-computed-from-globs-markers-and-config.md) · [0036](../adr/0036-kit-seed-files-inside-factory.md) · [0037](../adr/0037-pack-content-is-our-own-words-checked-in-review.md)
 
 ## Summary
 
