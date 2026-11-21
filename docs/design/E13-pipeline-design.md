@@ -43,12 +43,12 @@ pyproject.toml                         # pipeline.py is under kit/.factory/workf
 ```python
 @dataclass(frozen=True)
 class Stage:
-    name: str                 # one of state.PHASES
-    roles: tuple[str, ...]    # sessions, in order; () when the driver does the work
-    skills: tuple[str, ...]   # one per role, or the stage's skills
-    scope: str                # "plan", "slice" or "main"
-    checkpoint: str           # "", "spec", "design" or "merge"
-    passes: str               # the plain-text pass condition, used in prompts and pipeline.md
+    name: str  # one of state.PHASES
+    roles: tuple[str, ...]  # sessions, in order; () when the driver does the work
+    skills: tuple[str, ...]  # one per role, or the stage's skills
+    scope: str  # "plan", "slice" or "main"
+    checkpoint: str  # "", "spec", "design" or "merge"
+    passes: str  # the plain-text pass condition, used in prompts and pipeline.md
     check: Callable[[Checkout], list[Problem]]
 ```
 
@@ -111,6 +111,8 @@ id = "e31-evidence-tags-p1"
 task = "e31-evidence-tags"
 base = "origin/main"
 stages = ["spec"]
+branch = "factory/e31-evidence-tags-p1"
+worktree = "/home/me/proj.worktrees/e31-evidence-tags-p1"
 
 [[sessions]]                     # one per command the driver sent
 run = "e31-evidence-tags-p1"
@@ -171,7 +173,7 @@ Every write to the record happens before the action it describes is confirmed: t
 
 E16 gives commands no extra environment beyond `FACTORY_JOB`. So the driver sends `[sys.executable, pipeline.py, "_env", "KEY=VALUE", ..., "--", argv...]`. That small internal command sets the variables and runs `argv` with `os.execv` on POSIX, or a `subprocess` call that passes the exit code on Windows (the runner's Job Object still holds the tree).
 
-**The prompt** is made by `prompt(stage, role, record, config)` from a fixed template. It names the job, stage, epic, task, skill, the spec, the design note and the task file, the last rejection note, and the stage's `passes` text. It ends with "Commit your work and stop." It's deterministic, and a test pins one stage's prompt in full.
+**The prompt** is made by `prompt(stage, role, job=, epic=, task=, reads=, note=)` from a fixed template. It names the job, stage, epic, task and skill, the files to read (the request, the spec, the design note, the task file), the last rejection note, and the stage's `passes` text. It ends with "Commit your work and stop." It's deterministic, and a test pins one stage's prompt in full.
 
 **Resume and cancel.** `resume` clears `needs-human` and drops the failed stage's unfinished sessions, so that stage starts again with the note. If the runner job is no longer running, the next step opens a new segment from its branch. `cancel` runs `run.py cancel` on an open segment, sets `cancelled`, and sets the E18 job `cancelled`.
 
@@ -201,8 +203,10 @@ These layers apply to a session, from the outside in:
 
 ```python
 class Forge(Protocol):
-    def open(self, branch: str, base: str, title: str, body: str) -> str: ...   # returns the PR's reference
-    def state(self, ref: str, branch: str, base: str) -> str: ...               # "open", "merged" or "closed"
+    def open(
+        self, branch: str, base: str, title: str, body: str
+    ) -> str: ...  # returns the PR's reference
+    def state(self, ref: str, branch: str, base: str) -> str: ...  # "open", "merged" or "closed"
 ```
 
 - **`GitHubForge`:** owner and repo come from `git remote get-url origin` (https or ssh forms).

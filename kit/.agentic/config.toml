@@ -36,5 +36,11 @@ job_timeout_minutes = 120  # per job; > 0
 max_parallel = 2  # jobs at once per daemon; 1 to 64
 worktree_root = ""  # empty = "../<repo>.worktrees"
 
+[pipeline]
+checkpoints = ["spec", "merge"]  # human checkpoints; "spec" and "merge" required, "design" optional
+agent_command = ["claude", "-p", "--agent", "{role}", "--output-format", "json", "--permission-mode", "acceptEdits", "--permission-prompts", "none", "--allowedTools", "{allowed_tools}", "{prompt}"]  # a role session; {role}, {allowed_tools}, {prompt} are whole items
+forge = "github"  # "github" | "git"
+gate_retries = 2  # Debugger sessions on a red gate; 0 to 5
+
 [telemetry]
 enabled = false
