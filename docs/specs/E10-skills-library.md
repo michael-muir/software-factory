@@ -121,3 +121,7 @@ The procedures the roles follow become skills: one folder per skill, each with a
 3. **Skills live in `.factory/skills/`,** like the rest of the kit. The blueprint's `skills/` is shorthand for it, and E12 copies them to each tool's skills folder.
 4. **Kit skills don't set `allowed-tools`.** A role's tool list governs what a session may do (E03), and the field is still experimental in the standard.
 5. **A live exercise counts once it's recorded.** The PR or handoff names the skill and the commits. A fixture run is the fallback for skills that building E10 doesn't use, such as `threat-check` or `release`.
+
+## Changes
+
+- **20 Nov 2026, approved by the product owner (E08-T5):** E08 ships `pull-request-evidence`, the skill the Integrator card already named, so the kit has 17 skills. AC-01's count and the table stand for the 16 that E10 delivered. AC-05's exception for `pull-request-evidence` is gone, and every `skill:` a card names is a kit skill. Its exercise record is live: E08's PRs #77 and #78 were drafted with `evidence.py` and checked with `check-pr --strict`. E10-T3's locked test was relocked for this, with approval.
