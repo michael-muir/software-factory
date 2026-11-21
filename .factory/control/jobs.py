@@ -15,6 +15,8 @@ for leases, which live only in the index (ADR 0052). Everything is under
 Usage:
     jobs.py new "<title>" [--id ID] [--track T] [--task TASK] [--branch B] [--worktree PATH]
     jobs.py show <job> [--json]
+    jobs.py list [--status S] [--json]
+    jobs.py rebuild
     jobs.py set <job> [--session S] [--title T] [--track T] [--phase P] [--status S]
                 [--task TASK] [--branch B] [--worktree PATH]
     jobs.py claim <job> [--session S] [--force] [--json]
@@ -30,6 +32,8 @@ from __future__ import annotations
 import argparse
 import contextlib
 import datetime as dt
+import decimal
+import importlib.util
 import json
 import os
 import re
@@ -40,7 +44,7 @@ import sys
 import time
 import tomllib
 from collections.abc import Callable, Iterator, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -456,7 +460,7 @@ def sidecars(repo: Repo, job_id: str) -> dict[str, str]:
 
 # Each migration is a tuple of statements; the schema's version is the number applied.
 MIGRATIONS: tuple[tuple[str, ...], ...] = (
-    (
+    (  # 1 (E18-T1): job records and leases
         "CREATE TABLE jobs (id TEXT PRIMARY KEY, title TEXT, track TEXT, phase TEXT,"
         " status TEXT, task TEXT, branch TEXT, worktree TEXT, owner TEXT, created TEXT,"
         " updated TEXT, path TEXT, sidecars TEXT)",
@@ -467,9 +471,34 @@ MIGRATIONS: tuple[tuple[str, ...], ...] = (
         " acquired REAL NOT NULL, expires REAL NOT NULL)",
         "CREATE TABLE problems (path TEXT PRIMARY KEY, problem TEXT NOT NULL)",
     ),
+    (  # 2 (E18-T2): runner jobs, usage and the worktrees' state
+        "ALTER TABLE jobs ADD COLUMN tasks TEXT",
+        "CREATE TABLE runner_jobs (id TEXT PRIMARY KEY, status TEXT, task TEXT, daemon TEXT,"
+        " usd REAL, created TEXT, data TEXT NOT NULL)",
+        "CREATE TABLE commands (runner_job TEXT NOT NULL, n INTEGER NOT NULL, argv TEXT,"
+        " exit_code INTEGER, started TEXT, duration_s REAL, log TEXT, PRIMARY KEY (runner_job, n))",
+        "CREATE TABLE usage (runner_job TEXT NOT NULL, file TEXT NOT NULL, usd TEXT NOT NULL,"
+        " at TEXT NOT NULL, PRIMARY KEY (runner_job, file))",
+        "CREATE TABLE worktrees (path TEXT PRIMARY KEY, branch TEXT, head TEXT, phase TEXT,"
+        " active_task TEXT, blockers TEXT)",
+        "CREATE TABLE tasks (worktree TEXT NOT NULL, task TEXT NOT NULL, status TEXT,"
+        " review_round INTEGER, open_findings TEXT, handoff TEXT, next TEXT,"
+        " PRIMARY KEY (worktree, task))",
+    ),
 )
 SCHEMA_VERSION = len(MIGRATIONS)
 LIVE_TABLES = ("leases",)  # not derived from files: kept by a rebuild
+DERIVED_TABLES = (
+    "jobs",
+    "job_tasks",
+    "claims",
+    "problems",
+    "runner_jobs",
+    "commands",
+    "usage",
+    "worktrees",
+    "tasks",
+)
 
 
 def _require_sqlite() -> None:
@@ -493,21 +522,73 @@ def _version(con: sqlite3.Connection) -> int:
     return int(row[0])
 
 
+def _too_new(repo: Repo, found: int) -> IndexTooNew:
+    return IndexTooNew(
+        f"{repo.index} has schema version {found}, newer than this tool's {SCHEMA_VERSION}"
+    )
+
+
 def _migrate(con: sqlite3.Connection, repo: Repo) -> None:
     found = _version(con)
     if found > SCHEMA_VERSION:
-        raise IndexTooNew(
-            f"{repo.index} has schema version {found}, newer than this tool's {SCHEMA_VERSION}"
-        )
+        raise _too_new(repo, found)
     if found == SCHEMA_VERSION:
         return
+    snapshot = take_snapshot(repo)
     with _transaction(con):
         found = _version(con)  # another process may have migrated it meanwhile
         for statements in MIGRATIONS[found:]:
             for statement in statements:
                 con.execute(statement)
         con.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
-        _reindex(con, repo)
+        _apply(con, snapshot)
+
+
+def _set_aside(repo: Repo, why: Exception) -> None:
+    """Move a damaged index out of the way, so a new one can be built from the files."""
+    stamp = dt.datetime.now(dt.UTC).strftime("%Y%m%dT%H%M%SZ")
+    target = repo.index.with_name(f"index.sqlite.damaged-{stamp}-{secrets.token_hex(2)}")
+    try:
+        os.replace(repo.index, target)
+        journal = repo.index.with_name("index.sqlite-journal")
+        if journal.exists():
+            os.replace(journal, Path(f"{target}-journal"))
+    except OSError as exc:
+        raise BadInput(
+            f"the index {repo.index} is damaged ({why}) and can't be moved aside ({exc}); "
+            "stop the other factory processes and run `jobs.py rebuild`"
+        ) from exc
+    _warn(f"the index was damaged ({why}); moved it to {target.name} and rebuilt it")
+
+
+def _connect(repo: Repo) -> sqlite3.Connection:
+    """Open and migrate the index. A damaged one is set aside and rebuilt (ADR 0051)."""
+    for attempt in range(2):
+        try:
+            con = sqlite3.connect(repo.index, timeout=BUSY_TIMEOUT_S, isolation_level=None)
+        except sqlite3.Error as exc:
+            raise IndexUnavailable(f"index unavailable: {exc}") from exc
+        try:
+            found = _version(con)
+            if found > SCHEMA_VERSION:
+                raise _too_new(repo, found)
+            check = con.execute("PRAGMA quick_check").fetchall()
+            if check != [("ok",)]:
+                raise sqlite3.DatabaseError(f"quick_check: {check[0][0]}")
+            _migrate(con, repo)
+            return con
+        except sqlite3.OperationalError as exc:
+            con.close()
+            raise IndexUnavailable(f"index unavailable: {exc}") from exc
+        except sqlite3.DatabaseError as exc:
+            con.close()
+            if attempt == 1:
+                raise IndexUnavailable(f"index unavailable: {exc}") from exc
+            _set_aside(repo, exc)
+        except BaseException:
+            con.close()
+            raise
+    raise AssertionError("unreachable")  # pragma: no cover
 
 
 @contextlib.contextmanager
@@ -515,17 +596,31 @@ def _index(repo: Repo) -> Iterator[sqlite3.Connection]:
     """An open, migrated index connection; closed on exit, because Windows holds open files."""
     _require_sqlite()
     repo.store.mkdir(parents=True, exist_ok=True)
+    con = _connect(repo)
     try:
-        con = sqlite3.connect(repo.index, timeout=BUSY_TIMEOUT_S, isolation_level=None)
-    except sqlite3.Error as exc:
-        raise IndexUnavailable(f"index unavailable: {exc}") from exc
-    try:
-        _migrate(con, repo)
         yield con
     except sqlite3.Error as exc:
         raise IndexUnavailable(f"index unavailable: {exc}") from exc
     finally:
         con.close()
+
+
+def _refuse_a_newer_index(repo: Repo) -> None:
+    """Before `new` writes anything: an index from a newer kit is refused (spec AC-09)."""
+    if not HAVE_SQLITE or not repo.index.is_file():
+        return
+    try:
+        con = sqlite3.connect(repo.index, timeout=BUSY_TIMEOUT_S)
+    except sqlite3.Error:
+        return
+    try:
+        found = _version(con)
+    except sqlite3.Error:
+        return  # locked or damaged: `new` still writes its record, with a warning
+    finally:
+        con.close()
+    if found > SCHEMA_VERSION:
+        raise _too_new(repo, found)
 
 
 def _put_job(con: sqlite3.Connection, repo: Repo, data: dict[str, Any]) -> None:
@@ -534,7 +629,9 @@ def _put_job(con: sqlite3.Connection, repo: Repo, data: dict[str, Any]) -> None:
     con.execute("DELETE FROM job_tasks WHERE job = ?", (job_id,))
     con.execute("DELETE FROM claims WHERE job = ?", (job_id,))
     con.execute(
-        "INSERT INTO jobs VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO jobs (id, title, track, phase, status, task, branch, worktree, owner,"
+        " created, updated, path, sidecars, tasks)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (
             job_id,
             data["title"],
@@ -549,6 +646,7 @@ def _put_job(con: sqlite3.Connection, repo: Repo, data: dict[str, Any]) -> None:
             data["updated"].isoformat(),
             str(repo.record(job_id)),
             json.dumps(sidecars(repo, job_id)),
+            json.dumps(data["tasks"]),
         ),
     )
     con.executemany(
@@ -563,20 +661,381 @@ def _put_job(con: sqlite3.Connection, repo: Repo, data: dict[str, Any]) -> None:
     )
 
 
-def _reindex(con: sqlite3.Connection, repo: Repo) -> None:
-    """Replace every derived row with what the files say. Leases are kept (ADR 0051)."""
-    for table in ("jobs", "job_tasks", "claims", "problems"):
-        con.execute(f"DELETE FROM {table}")  # fixed table names, never input
+# --- readers: the runner's files (ADR 0030) and each worktree's .agentic (E02) ------------------
+
+RUNNER_ID = re.compile(r"[a-z0-9][a-z0-9-]{0,39}", re.ASCII)  # mirrors run.JOB_ID (E16)
+STATE_PY = Path(__file__).resolve().parent.parent / "state" / "state.py"
+_STATE_MODULE: list[Any] = []
+
+
+def _state_module() -> Any:
+    """The kit's own state.py, loaded by path as docs.py does; None if it isn't installed."""
+    if not _STATE_MODULE:
+        module = None
+        if STATE_PY.is_file():
+            spec = importlib.util.spec_from_file_location("factory_state_for_jobs", STATE_PY)
+            if spec is not None and spec.loader is not None:
+                module = importlib.util.module_from_spec(spec)
+                sys.modules[spec.name] = module  # dataclasses look their module up here
+                spec.loader.exec_module(module)
+        _STATE_MODULE.append(module)
+    return _STATE_MODULE[0]
+
+
+@dataclass
+class Snapshot:
+    """Everything the derived tables hold, read from the files before any lock is taken."""
+
+    repo: Repo
+    records: list[dict[str, Any]] = field(default_factory=list)
+    problems: list[tuple[str, str]] = field(default_factory=list)
+    runners: list[dict[str, Any]] = field(default_factory=list)
+    usage: list[tuple[str, str, str, str]] = field(default_factory=list)
+    worktrees: list[dict[str, Any]] = field(default_factory=list)
+
+
+def _read_toml(path: Path) -> dict[str, Any]:
+    with path.open("rb") as f:
+        return tomllib.load(f)
+
+
+def _runner_ids(repo: Repo) -> list[str]:
+    ids: set[str] = set()
+    queue = repo.store / "queue"
+    if queue.is_dir():
+        ids |= {p.stem for p in queue.glob("*.toml") if RUNNER_ID.fullmatch(p.stem)}
+    folder = repo.store / "jobs"
+    if folder.is_dir():
+        ids |= {p.name for p in folder.iterdir() if p.is_dir() and RUNNER_ID.fullmatch(p.name)}
+    return sorted(ids)
+
+
+def _runner_request(repo: Repo, runner_id: str) -> dict[str, Any] | None:
+    places = (
+        repo.store / "queue" / f"{runner_id}.toml",
+        repo.store / "jobs" / runner_id / "request.toml",
+    )
+    for _ in range(3):  # a claim moves the file between the two places
+        for path in places:
+            try:
+                return _read_toml(path)
+            except FileNotFoundError:
+                continue
+    return None
+
+
+def _runner_worktree_root(main: Path) -> str:
+    try:
+        value = _read_toml(main / CONFIG_REL).get("runner", {}).get("worktree_root", "")
+    except (OSError, tomllib.TOMLDecodeError, AttributeError):
+        return ""
+    return value if isinstance(value, str) else ""
+
+
+def _usage_files(folder: Path) -> list[tuple[str, decimal.Decimal, str]]:
+    """(file name, amount, time) for each report, as run.py's ledger counts them."""
+    found: list[tuple[str, decimal.Decimal, str]] = []
+    if not folder.is_dir():
+        return found
+    for path in sorted(folder.iterdir()):
+        if path.suffix != ".usd" or path.name.startswith("."):
+            continue
+        try:
+            text = path.read_text(encoding="utf-8").strip()
+            amount = decimal.Decimal(text)
+        except (OSError, decimal.InvalidOperation):
+            continue
+        nanos = path.name.split("-", 1)[0]
+        at = _iso(int(nanos) / 1e9) if nanos.isdigit() else ""
+        found.append((path.name, amount, at))
+    return found
+
+
+def runner_view(repo: Repo, runner_id: str, worktree_root: str = "") -> dict[str, Any] | None:
+    """A runner job as `run.py status --json` shows it (pinned by a test), or None if it has
+    neither a request nor a record yet. Raises BadInput for files that can't be read."""
+    folder = repo.store / "jobs" / runner_id
+    try:
+        request = _runner_request(repo, runner_id)
+        record: dict[str, Any] | None = None
+        if (folder / "job.toml").is_file():
+            record = _read_toml(folder / "job.toml")
+    except (OSError, tomllib.TOMLDecodeError) as exc:
+        raise BadInput(f"runner job {runner_id}: {exc}") from exc
+    if request is None and record is None:
+        return None
+    usd = float(sum((u[1] for u in _usage_files(folder / "usage")), decimal.Decimal(0)))
+    try:
+        if request is None:
+            raise KeyError("request")
+        logs = folder / "logs"
+        argvs = [list(c) for c in request["commands"]]
+        sent = folder / "commands"
+        if sent.is_dir():
+            names = sorted(p.name for p in sent.iterdir() if re.fullmatch(r"\d{4,}\.toml", p.name))
+            argvs += [list(_read_toml(sent / name)["argv"]) for name in names]
+        commands: list[dict[str, Any]] = [
+            {
+                "argv": argv,
+                "exit_code": None,
+                "started": None,
+                "duration_s": None,
+                "log": str(logs / f"{n:04d}.log"),
+            }
+            for n, argv in enumerate(argvs, start=1)
+        ]
+        main = repo.main
+        base = main / worktree_root if worktree_root else main.parent / f"{main.name}.worktrees"
+        data: dict[str, Any] = {
+            "id": runner_id,
+            "status": "queued",
+            "reason": "",
+            "base": request["base"],
+            "branch": f"factory/{runner_id}",
+            "worktree": str(Path(os.path.normpath(base / runner_id))),
+            "task": request["task"],
+            "open": request["open"],
+            "closed": not request["open"] or (folder / "closed").exists(),
+            "created": request["submitted"],
+            "started": None,
+            "finished": None,
+            "turns": 0,
+            "usd": 0.0,
+            "warnings": [],
+            "commands": commands,
+        }
+    except (KeyError, TypeError, OSError, tomllib.TOMLDecodeError):
+        if record is None:
+            raise BadInput(f"runner job {runner_id}: its request can't be read") from None
+        data = {"id": runner_id, "commands": []}  # a malformed request: its record alone
+        commands = data["commands"]
+    ran = dict(record or {})
+    for n, command in enumerate(ran.pop("commands", [])):
+        if n < len(commands):
+            commands[n].update(command)
+        elif request is None:
+            commands.append(command)
+    data.update(ran)
+    data["usd"] = usd
+    result = _jsonable(data)
+    assert isinstance(result, dict)
+    return result
+
+
+def _section(body: str, heading: str) -> str:
+    lines = body.split("\n")
+    out: list[str] = []
+    inside = False
+    for line in lines:
+        if line.startswith("## "):
+            inside = line.strip() == heading
+            continue
+        if inside:
+            out.append(line)
+    return "\n".join(out).strip()
+
+
+def _worktree_list(repo: Repo) -> list[dict[str, str]]:
+    listing = _git(repo.main, "worktree", "list", "--porcelain")
+    if listing.returncode != 0:
+        raise BadInput(f"git worktree list failed: {listing.stderr.strip()}")
+    found: list[dict[str, str]] = []
+    entry: dict[str, str] = {}
+    for line in [*listing.stdout.splitlines(), ""]:
+        if not line.strip():
+            if entry.get("path") and "bare" not in entry and Path(entry["path"]).is_dir():
+                found.append(entry)
+            entry = {}
+            continue
+        key, _, value = line.partition(" ")
+        if key == "worktree":
+            entry = {"path": value, "head": "", "branch": ""}
+        elif key == "HEAD":
+            entry["head"] = value
+        elif key == "branch":
+            entry["branch"] = value.removeprefix("refs/heads/")
+        elif key == "bare":
+            entry["bare"] = "1"
+    return found
+
+
+def _worktree_state(path: Path, problems: list[tuple[str, str]]) -> dict[str, Any]:
+    """The phase, active task, blockers, and each task's state, read with the kit's state.py."""
+    found: dict[str, Any] = {"phase": "", "active_task": "", "blockers": [], "tasks": []}
+    state = _state_module()
+    agentic = path / ".agentic"
+    if not agentic.is_dir():
+        return found
+    if state is None:
+        problems.append((str(agentic), "the kit's state.py isn't installed"))
+        return found
+
+    def parsed(file: Path) -> dict[str, Any] | None:
+        try:
+            result = state.parse(file.read_text(encoding="utf-8"))
+        except OSError as exc:
+            problems.append((str(file), str(exc)))
+            return None
+        if isinstance(result, str):
+            problems.append((str(file), result))
+            return None
+        front, body = result
+        return {"front": front, "body": body}
+
+    state_md = agentic / "STATE.md"
+    if state_md.is_file():
+        text = state_md.read_text(encoding="utf-8")
+        if text.replace("\r\n", "\n") != state.E01_PLACEHOLDER:
+            got = parsed(state_md)
+            if got is not None:
+                front = got["front"]
+                found["phase"] = str(front.get("phase", ""))
+                found["active_task"] = str(front.get("active_task", ""))
+                blockers = front.get("blockers", [])
+                found["blockers"] = [str(b) for b in blockers] if isinstance(blockers, list) else []
+    newest: dict[str, tuple[Any, str, str]] = {}
+    handoffs = agentic / "handoffs"
+    if handoffs.is_dir():
+        for file in sorted(handoffs.glob("*.md")):
+            got = parsed(file)
+            if got is None:
+                continue
+            task = str(got["front"].get("task", ""))
+            order = state._handoff_order(f".agentic/handoffs/{file.name}", got["front"])
+            if task not in newest or order > newest[task][0]:
+                newest[task] = (order, str(file), _section(got["body"], "## Next"))
+    tasks = agentic / "tasks"
+    if tasks.is_dir():
+        for file in sorted(tasks.glob("*.md")):
+            got = parsed(file)
+            if got is None:
+                continue
+            front = got["front"]
+            findings = front.get("findings", [])
+            task_id = file.stem
+            latest = newest.get(task_id)
+            found["tasks"].append(
+                {
+                    "id": task_id,
+                    "status": str(front.get("status", "")),
+                    "review_round": front.get("review_round", 0),
+                    "open_findings": [
+                        {k: f.get(k) for k in ("id", "severity", "summary")}
+                        for f in (findings if isinstance(findings, list) else [])
+                        if isinstance(f, dict) and f.get("status") == "open"
+                    ],
+                    "handoff": latest[1] if latest else "",
+                    "next": latest[2] if latest else "",
+                }
+            )
+    return found
+
+
+def take_snapshot(repo: Repo) -> Snapshot:
+    """Read every file the derived tables come from. Problems are collected, never raised."""
+    snap = Snapshot(repo)
     if repo.work.is_dir():
         for path in sorted(repo.work.glob("*.toml")):
             job_id = path.name[: -len(".toml")]
             if not JOB_ID.fullmatch(job_id):
                 continue  # a sidecar
             try:
-                _put_job(con, repo, read_job(repo, job_id))
+                snap.records.append(read_job(repo, job_id))
             except BadInput as exc:
-                con.execute("INSERT OR REPLACE INTO problems VALUES (?, ?)", (str(path), str(exc)))
+                snap.problems.append((str(path), str(exc)))
+    root = _runner_worktree_root(repo.main)
+    for runner_id in _runner_ids(repo):
+        try:
+            view = runner_view(repo, runner_id, root)
+        except BadInput as exc:
+            snap.problems.append((str(repo.store / "jobs" / runner_id), str(exc)))
+            continue
+        if view is not None:
+            snap.runners.append(view)
+            usage = _usage_files(repo.store / "jobs" / runner_id / "usage")
+            snap.usage += [(runner_id, name, str(amount), at) for name, amount, at in usage]
+    try:
+        entries = _worktree_list(repo)
+    except BadInput as exc:
+        snap.problems.append((str(repo.main), str(exc)))
+        entries = []
+    for entry in entries:
+        snap.worktrees.append({**entry, **_worktree_state(Path(entry["path"]), snap.problems)})
+    return snap
+
+
+def _apply(con: sqlite3.Connection, snap: Snapshot) -> None:
+    """Replace every derived row with the snapshot. Leases are kept (ADR 0051)."""
+    for table in DERIVED_TABLES:
+        con.execute(f"DELETE FROM {table}")  # fixed table names, never input
+    for data in snap.records:
+        _put_job(con, snap.repo, data)
+    con.executemany("INSERT OR REPLACE INTO problems VALUES (?, ?)", snap.problems)
+    for view in snap.runners:
+        con.execute(
+            "INSERT INTO runner_jobs VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (
+                view["id"],
+                view.get("status", ""),
+                view.get("task", ""),
+                view.get("daemon", ""),
+                view.get("usd", 0.0),
+                view.get("created", ""),
+                json.dumps(view),
+            ),
+        )
+        con.executemany(
+            "INSERT INTO commands VALUES (?, ?, ?, ?, ?, ?, ?)",
+            [
+                (
+                    view["id"],
+                    n,
+                    json.dumps(c.get("argv")),
+                    c.get("exit_code"),
+                    c.get("started"),
+                    c.get("duration_s"),
+                    c.get("log"),
+                )
+                for n, c in enumerate(view.get("commands", []), start=1)
+            ],
+        )
+    con.executemany("INSERT OR REPLACE INTO usage VALUES (?, ?, ?, ?)", snap.usage)
+    for tree in snap.worktrees:
+        con.execute(
+            "INSERT OR REPLACE INTO worktrees VALUES (?, ?, ?, ?, ?, ?)",
+            (
+                tree["path"],
+                tree["branch"],
+                tree["head"],
+                tree["phase"],
+                tree["active_task"],
+                json.dumps(tree["blockers"]),
+            ),
+        )
+        con.executemany(
+            "INSERT OR REPLACE INTO tasks VALUES (?, ?, ?, ?, ?, ?, ?)",
+            [
+                (
+                    tree["path"],
+                    t["id"],
+                    t["status"],
+                    t["review_round"],
+                    json.dumps(t["open_findings"]),
+                    t["handoff"],
+                    t["next"],
+                )
+                for t in tree["tasks"]
+            ],
+        )
     con.execute("DELETE FROM leases WHERE job NOT IN (SELECT id FROM jobs)")
+
+
+def _refresh(repo: Repo) -> Snapshot:
+    """Re-read every file, then replace the derived rows in one short transaction."""
+    snap = take_snapshot(repo)
+    with _index(repo) as con, _transaction(con):
+        _apply(con, snap)
+    return snap
 
 
 def _index_job(repo: Repo, data: dict[str, Any]) -> None:
@@ -762,6 +1221,7 @@ def new_job(
         _check_job_id(job_id)
     if task is not None:
         _check_task(task)
+    _refuse_a_newer_index(repo)
     moment = _stamp(_now(now))
     reserved = _reserve_id(repo, job_id)
     the_task = reserved if task is None else task
@@ -839,6 +1299,128 @@ def write_sidecar(
     return path
 
 
+# --- reading the index (spec AC-05, AC-10) ----------------------------------------------------
+
+_BELONGS = (
+    "SELECT jt.job FROM job_tasks jt JOIN jobs j ON j.id = jt.job"
+    " WHERE jt.task = ? AND j.status NOT IN ('done', 'cancelled') ORDER BY j.created, j.id LIMIT 1"
+)
+
+
+def _job_entries(con: sqlite3.Connection, now: float) -> list[dict[str, Any]]:
+    rows = con.execute(
+        "SELECT id, title, track, phase, status, task, tasks, branch, worktree, owner, created,"
+        " updated FROM jobs ORDER BY created, id"
+    ).fetchall()
+    found: list[dict[str, Any]] = []
+    for row in rows:
+        keys = ("id", "title", "track", "phase", "status", "task", "tasks", "branch")
+        entry: dict[str, Any] = dict(zip(keys, row[:8], strict=True))
+        entry["tasks"] = json.loads(row[6] or "[]")
+        entry.update(worktree=row[8], owner=row[9], created=row[10], updated=row[11])
+        lease = _lease(con, entry["id"])
+        entry["state"] = _state(entry, lease, now)
+        entry["stale"] = False  # E18-T3: runner jobs of a dead daemon
+        entry["lease"] = (
+            None if lease is None else {k: v for k, v in lease.as_json().items() if k != "job"}
+        )
+        found.append(entry)
+    return found
+
+
+def _runner_entries(con: sqlite3.Connection) -> list[dict[str, Any]]:
+    found: list[dict[str, Any]] = []
+    for task, data in con.execute("SELECT task, data FROM runner_jobs ORDER BY id").fetchall():
+        view: dict[str, Any] = json.loads(data)
+        owner = con.execute(_BELONGS, (task,)).fetchone()
+        view["belongs_to"] = owner[0] if owner else ""
+        found.append(view)
+    return found
+
+
+def _worktree_entries(con: sqlite3.Connection) -> list[dict[str, Any]]:
+    found: list[dict[str, Any]] = []
+    rows = con.execute(
+        "SELECT path, branch, head, phase, active_task, blockers FROM worktrees ORDER BY path"
+    ).fetchall()
+    for path, branch, head, phase, active, blockers in rows:
+        tasks = [
+            {
+                "id": task,
+                "status": status,
+                "review_round": review_round,
+                "open_findings": json.loads(findings),
+                "handoff": handoff,
+                "next": next_text,
+            }
+            for task, status, review_round, findings, handoff, next_text in con.execute(
+                "SELECT task, status, review_round, open_findings, handoff, next FROM tasks"
+                " WHERE worktree = ? ORDER BY task",
+                (path,),
+            ).fetchall()
+        ]
+        found.append(
+            {
+                "path": path,
+                "branch": branch,
+                "head": head,
+                "phase": phase,
+                "active_task": active,
+                "blockers": json.loads(blockers),
+                "tasks": tasks,
+            }
+        )
+    return found
+
+
+def index_listing(
+    repo: Repo, *, status: str | None = None, now: float | None = None
+) -> dict[str, Any]:
+    """Refresh the index from the files, then return what it holds (spec AC-05, AC-10)."""
+    _refresh(repo)
+    moment = _now(now)
+    with _index(repo) as con:
+        jobs = _job_entries(con, moment)
+        data = {
+            "jobs": [j for j in jobs if status is None or j["status"] == status],
+            "runner_jobs": _runner_entries(con),
+            "usage": [
+                {"runner_job": r, "file": f, "usd": u, "at": a}
+                for r, f, u, a in con.execute(
+                    "SELECT runner_job, file, usd, at FROM usage ORDER BY runner_job, file"
+                ).fetchall()
+            ],
+            "worktrees": _worktree_entries(con),
+            "problems": [
+                {"path": path, "problem": problem}
+                for path, problem in con.execute(
+                    "SELECT path, problem FROM problems ORDER BY path"
+                ).fetchall()
+            ],
+        }
+    return data
+
+
+def _same_path(a: str, b: str) -> bool:
+    return os.path.normcase(os.path.realpath(a)) == os.path.normcase(os.path.realpath(b))
+
+
+def job_context(repo: Repo, job_id: str, listing: dict[str, Any]) -> dict[str, Any]:
+    """The job's runner jobs, oldest first, and the state of the worktree it works in."""
+    data = read_job(repo, job_id)
+    runners = sorted(
+        (r for r in listing["runner_jobs"] if r["belongs_to"] == job_id),
+        key=lambda r: (str(r.get("created", "")), r["id"]),
+    )
+    worktree = data["worktree"] or next(
+        (str(r.get("worktree", "")) for r in reversed(runners) if r.get("worktree")), ""
+    )
+    tree = next(
+        (w for w in listing["worktrees"] if worktree and _same_path(w["path"], worktree)), None
+    )
+    return {"runner_jobs": runners, "worktree_state": tree}
+
+
 # --- the command line ---------------------------------------------------------------------------
 
 
@@ -892,6 +1474,7 @@ def _new(args: argparse.Namespace) -> int:
 def _show(args: argparse.Namespace) -> int:
     repo, _ = _repo_and_config()
     data = read_job(repo, args.job)
+    listing = index_listing(repo)
     moment = time.time()
     with _index(repo) as con:
         lease = _lease(con, args.job)
@@ -900,11 +1483,38 @@ def _show(args: argparse.Namespace) -> int:
     shown["lease"] = None if lease is None else lease.as_json()
     shown["sidecars"] = sidecars(repo, args.job)
     if args.json:
+        shown.update(job_context(repo, args.job, listing))
         print(json.dumps(_jsonable(shown), indent=2))
     else:
         if shown["lease"] is None:
             del shown["lease"]  # TOML has no null
         sys.stdout.write(dumps(shown))
+    return 0
+
+
+def _list(args: argparse.Namespace) -> int:
+    repo, _ = _repo_and_config()
+    data = index_listing(repo, status=args.status)
+    if args.json:
+        print(json.dumps(data, indent=2))
+        return 0
+    for job in data["jobs"]:
+        state = job["state"] + (",stale" if job["stale"] else "")
+        owner = job["lease"]["session"] if job["lease"] else "-"
+        cells = (job["id"], state, job["track"], job["phase"], job["status"], job["task"], owner)
+        print("  ".join(cells) + "  " + job["title"])
+    for problem in data["problems"]:
+        print(f"problem: {problem['path']}: {problem['problem']}")
+    return 0
+
+
+def _rebuild(args: argparse.Namespace) -> int:
+    repo, _ = _repo_and_config()
+    snap = _refresh(repo)
+    print(
+        f"rebuilt the index: {len(snap.records)} jobs, {len(snap.runners)} runner jobs, "
+        f"{len(snap.worktrees)} worktrees, {len(snap.problems)} problems"
+    )
     return 0
 
 
@@ -964,6 +1574,14 @@ def _parser() -> argparse.ArgumentParser:
     show.add_argument("job")
     show.add_argument("--json", action="store_true", help="print it as JSON")
     show.set_defaults(run=_show)
+
+    list_ = commands.add_parser("list", help="list every job, refreshed from the files")
+    list_.add_argument("--status", choices=STATUSES, help="only jobs with this status")
+    list_.add_argument("--json", action="store_true", help="print the whole index as JSON")
+    list_.set_defaults(run=_list)
+
+    rebuild = commands.add_parser("rebuild", help="rebuild the index from the files")
+    rebuild.set_defaults(run=_rebuild)
 
     set_ = commands.add_parser("set", help="change a job's fields (lease holder only)")
     set_.add_argument("job")
