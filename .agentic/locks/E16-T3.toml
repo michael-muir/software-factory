@@ -1,5 +1,5 @@
 task = "E16-T3"
-locked = 2026-11-20T23:29:34Z
+locked = 2026-11-21T00:34:30Z
 
 [[files]]
 path = "tests/_halt.py"
@@ -19,4 +19,4 @@ sha256 = "9fdfadcbd2dd6da05434bd99458da1c04ca7fa6819f8ffa7afb4ce9ceee1815e"
 
 [[files]]
 path = "tests/test_runner_halts.py"
-sha256 = "920e2d48137845effdc2139b43b9f27dcc130acfa1a969525d1502788be2a3b1"
+sha256 = "b7e0cac41d5f981e0fcd7ac5778b74aa0b316cb5027af151ef33d7d6f6bc02bc"

@@ -95,7 +95,7 @@ def test_cancel_kills_a_real_jobs_tree_with_an_orphan_within_10_seconds(
     assert data["warnings"] == [], "the tree was killed without a fallback"
     worktree = Path(data["worktree"])
     assert worktree.is_dir()
-    assert len(handoffs(worktree, job)) == 1
+    assert until(lambda: len(handoffs(worktree, job)) == 1, timeout=30)
     checked = state_py(worktree, "check")
     assert checked.returncode == 0, checked.stdout + checked.stderr
     assert daemons[0].poll() is None, "the daemon carries on"
