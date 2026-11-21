@@ -51,6 +51,7 @@ KIT_FILES = frozenset(
         ".factory/skills/handoff/SKILL.md",
         ".factory/skills/lock-tests/SKILL.md",
         ".factory/skills/perf-budget/SKILL.md",
+        ".factory/skills/pull-request-evidence/SKILL.md",
         ".factory/skills/release/SKILL.md",
         ".factory/skills/resume-from-state/SKILL.md",
         ".factory/skills/retro/SKILL.md",

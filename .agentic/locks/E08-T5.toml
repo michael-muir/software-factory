@@ -1,0 +1,10 @@
+task = "E08-T5"
+locked = 2026-11-21T03:31:47Z
+
+[[files]]
+path = "tests/test_evidence_skill.py"
+sha256 = "bb8a4c5af985bd1875b1d051e1bb058d9f22741305d61a2e04ff3376d6666fe9"
+
+[[files]]
+path = "tests/test_evidence_done_when.py"
+sha256 = "1ab1ce949742a6c0970bec4ec1686c68c4df9606129b76347cd229ea5a2906b6"
