@@ -1,6 +1,6 @@
 # 0052 · Leases and heartbeats live only in the index, and its write lock serialises every job record write
 
-Status: Proposed · Date: 2026-11-21 · Epic: E18
+Status: Accepted · Date: 2026-11-21 · Epic: E18
 
 ## Context
 

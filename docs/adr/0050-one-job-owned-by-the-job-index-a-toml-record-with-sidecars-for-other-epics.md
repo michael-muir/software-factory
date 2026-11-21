@@ -1,6 +1,6 @@
 # 0050 · There is one job, owned by the job index: a TOML record in the git common directory, with sidecar files for other epics
 
-Status: Proposed · Date: 2026-11-21 · Epic: E18
+Status: Accepted · Date: 2026-11-21 · Epic: E18
 
 ## Context
 

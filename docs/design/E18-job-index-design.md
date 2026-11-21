@@ -1,7 +1,7 @@
 # E18 · Job index design note
 
 Spec: [E18 spec](../specs/E18-job-index.md) · Issue: [#18](https://github.com/michael-muir/software-factory/issues/18)
-Status: **Proposed, awaiting product owner acceptance** · ADRs: [0050](../adr/0050-one-job-owned-by-the-job-index-a-toml-record-with-sidecars-for-other-epics.md) · [0051](../adr/0051-the-sqlite-index-is-derived-from-files-kept-current-by-write-through-and-rebuilt-in-place.md) · [0052](../adr/0052-leases-and-heartbeats-live-only-in-the-index-whose-write-lock-serialises-record-writes.md) · [0053](../adr/0053-the-runner-reaches-the-index-through-jobs-py-loaded-by-path-and-a-failure-is-only-a-warning.md)
+Status: **Accepted by the product owner, 21 Nov 2026** · ADRs: [0050](../adr/0050-one-job-owned-by-the-job-index-a-toml-record-with-sidecars-for-other-epics.md) · [0051](../adr/0051-the-sqlite-index-is-derived-from-files-kept-current-by-write-through-and-rebuilt-in-place.md) · [0052](../adr/0052-leases-and-heartbeats-live-only-in-the-index-whose-write-lock-serialises-record-writes.md) · [0053](../adr/0053-the-runner-reaches-the-index-through-jobs-py-loaded-by-path-and-a-failure-is-only-a-warning.md)
 
 ## Summary
 

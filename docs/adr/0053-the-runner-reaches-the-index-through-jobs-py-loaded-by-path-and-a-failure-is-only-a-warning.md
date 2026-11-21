@@ -1,6 +1,6 @@
 # 0053 · The runner reaches the index through jobs.py loaded by path, and an index failure is only a warning
 
-Status: Proposed · Date: 2026-11-21 · Epic: E18
+Status: Accepted · Date: 2026-11-21 · Epic: E18
 
 ## Context
 

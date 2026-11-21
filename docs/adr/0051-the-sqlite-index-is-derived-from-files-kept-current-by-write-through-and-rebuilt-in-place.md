@@ -1,6 +1,6 @@
 # 0051 · The SQLite index is derived from files, kept current by write-through and refresh on read, and rebuilt in place
 
-Status: Proposed · Date: 2026-11-21 · Epic: E18
+Status: Accepted · Date: 2026-11-21 · Epic: E18
 
 ## Context
 
