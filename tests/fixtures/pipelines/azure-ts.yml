@@ -1,0 +1,25 @@
+# Software Factory gate (E07). Rendered by `python install.py ci azure`; upgrades re-render it.
+trigger:
+  branches:
+    include: ["main"]
+pr:
+  branches:
+    include: ["*"]
+pool:
+  vmImage: ubuntu-latest
+steps:
+  - checkout: self
+    fetchDepth: 0
+  - task: UsePythonVersion@0
+    inputs:
+      versionSpec: "3.12"
+  - task: NodeTool@0
+    inputs:
+      versionSpec: "22.x"  # the current Node LTS line
+  - script: npm ci
+  - script: "git fetch origin $(System.PullRequest.TargetBranchName) && python .factory/gates/gate.py --base-ref origin/$(System.PullRequest.TargetBranchName)"
+    displayName: Gate (pull request)
+    condition: eq(variables['Build.Reason'], 'PullRequest')
+  - script: "python .factory/gates/gate.py"
+    displayName: Gate
+    condition: ne(variables['Build.Reason'], 'PullRequest')

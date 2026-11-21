@@ -1,0 +1,13 @@
+# Software Factory gate (E07). Rendered by `python install.py ci gitlab`; upgrades re-render it.
+# Turn it on: `include:` this file from .gitlab-ci.yml, or set it as the CI config path.
+factory-gate:
+  image: "python:3.12"
+  variables:
+    GIT_DEPTH: "0"
+  rules:
+    - if: "$CI_PIPELINE_SOURCE == \"merge_request_event\""
+    - if: "$CI_COMMIT_BRANCH == \"main\""
+  before_script:
+    - "pip install -e ."
+  script:
+    - "if [ -n \"$CI_MERGE_REQUEST_TARGET_BRANCH_NAME\" ]; then git fetch origin \"$CI_MERGE_REQUEST_TARGET_BRANCH_NAME\" && python .factory/gates/gate.py --base-ref \"origin/$CI_MERGE_REQUEST_TARGET_BRANCH_NAME\"; else python .factory/gates/gate.py; fi"
