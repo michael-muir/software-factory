@@ -67,6 +67,13 @@ def _positive(value: Any) -> str | None:
     return None if value > 0 else "must be greater than 0"
 
 
+def _at_least(low: float) -> Check:
+    def check(value: Any) -> str | None:
+        return None if value >= low else f"must be at least {low:g}"
+
+    return check
+
+
 def _equals_one(value: Any) -> str | None:
     return None if value == 1 else "must be 1"
 
@@ -232,6 +239,12 @@ SECTIONS: dict[str, dict[str, Field]] = {
             "booltable", {}, _pack_names, "pack name = true | false; empty = every pack on"
         ),
         "ignore": Field("strlist", [], _rule_ids, 'rule ids switched off here, e.g. ["PY-007"]'),
+    },
+    "jobs": {
+        "lease_minutes": Field("number", 10, _positive, "a session's lease on a job; > 0"),
+        "daemon_timeout_seconds": Field(
+            "number", 60, _at_least(5), "a daemon is dead after this long silent; >= 5"
+        ),
     },
     "telemetry": {
         "enabled": Field("bool", False),

@@ -46,5 +46,9 @@ gate_retries = 2  # Debugger sessions on a red gate; 0 to 5
 packs = {}  # pack name = true | false; empty = every pack on
 ignore = []  # rule ids switched off here, e.g. ["PY-007"]
 
+[jobs]
+lease_minutes = 10  # a session's lease on a job; > 0
+daemon_timeout_seconds = 60  # a daemon is dead after this long silent; >= 5
+
 [telemetry]
 enabled = false

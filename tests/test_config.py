@@ -59,6 +59,7 @@ SPEC_DEFAULTS = {
         "gate_retries": 2,
     },
     "standards": {"packs": {}, "ignore": []},
+    "jobs": {"lease_minutes": 10, "daemon_timeout_seconds": 60},
     "telemetry": {"enabled": False},
 }
 

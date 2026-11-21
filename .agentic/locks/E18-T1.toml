@@ -1,0 +1,18 @@
+task = "E18-T1"
+locked = 2026-11-21T09:54:49Z
+
+[[files]]
+path = "tests/_jobs.py"
+sha256 = "6ff2de104920484d5dee7036dcb3a56fc9b61724aad4c691992eb9c2043c1f3a"
+
+[[files]]
+path = "tests/test_jobs_records.py"
+sha256 = "a098fb2e210ef114f3924c7dc3aaa990ba47e042c2776f2c77bd7de5b76c67e9"
+
+[[files]]
+path = "tests/test_jobs_leases.py"
+sha256 = "0a5df96514a20483e64582bf7fb21ac3f51fe2fcb11878d903c08b1199cbc12b"
+
+[[files]]
+path = "tests/test_jobs_config.py"
+sha256 = "c61add83a8568442dfe7eabad62c6a9b895cb71dcd95c168b517014a9fc2a6d2"
