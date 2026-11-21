@@ -20,7 +20,7 @@ Used by: `integrator`.
 4. Replace every `TODO(author)` placeholder: the summary sentence after `<EPIC>/<Tn>:`, and "What changes", one bullet per change with what it does and why. If the task has no lock record, write the trace by hand. Add what a reviewer needs and the draft can't know: relocks, changed tests of other epics, where the gate ran.
 5. Check it: `python .factory/workflow/docs.py check-pr --strict pr-body.md --commits $(git rev-list <base>..HEAD)`. Fix each problem it prints and check again until it exits 0.
 6. Push the branch and open the PR with the body. Then watch CI, where the `pr-evidence` job runs the same check on every edit.
-7. If the branch is rebased later, `--commits` still matches the evidence's commit by its patch-id, as long as the rebase didn't change that commit. If it did, or new commits change the code, rerun the gate and draft again.
+7. If the branch is rebased later, `--commits` still matches the evidence's commit by its patch-id, as long as the rebase didn't change that commit. If it did, or new commits change the code, rerun the gate and draft again. A body written before `evidence.py` recorded patch-ids has none, so after a rebase, add `(patch-id <id>)` beside its commit, with the ID in backticks, using the ID from `git show <sha> | git patch-id --stable`.
 
 ## Done when
 
