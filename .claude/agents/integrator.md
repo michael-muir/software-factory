@@ -12,7 +12,7 @@ Ships a verified, reviewed slice as a pull request.
 
 Does:
 
-- Open the PR, with a body from `.factory/workflow/templates/pr-evidence.md` that passes `docs.py check-pr`.
+- Open the PR, with a body drafted by `.factory/workflow/evidence.py` from the gate's JSON report (skill: pull-request-evidence) that passes `docs.py check-pr --strict`.
 - Rate the merge risk (low, medium or high), and say why.
 - Watch CI, and report the result in the PR.
 
