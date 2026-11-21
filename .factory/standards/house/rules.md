@@ -24,6 +24,6 @@ Don't repeat those rules here.
 
 ## Rules
 
-| Rule id | Severity | Rule | Why/example | Source |
-| --- | --- | --- | --- | --- |
-| HOUSE-001 | retired | Example: replace this row with your first rule. | A retired row is never cited, and keeps its id. | [ADR 0036](https://github.com/michael-muir/software-factory/blob/main/docs/adr/0036-kit-seed-files-inside-factory.md) |
+| Rule id   | Severity | Rule                                            | Why/example                                     | Source                                                                                                                |
+| --------- | -------- | ----------------------------------------------- | ----------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| HOUSE-001 | retired  | Example: replace this row with your first rule. | A retired row is never cited, and keeps its id. | [ADR 0036](https://github.com/michael-muir/software-factory/blob/main/docs/adr/0036-kit-seed-files-inside-factory.md) |
