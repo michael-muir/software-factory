@@ -56,7 +56,7 @@
     ".factory/skills/verify-with-evidence/SKILL.md": "a057760090961e5b5c9d629ce25c302e91b88431c36c6ea62cb1ac61e20cc457",
     ".factory/standards/.gitkeep": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
     ".factory/state/state.py": "cd73f343b6cdd64e93b44f4d884b204a4344a262d2e1326f36448bfa60489959",
-    ".factory/workflow/docs.py": "2a59d3f280791ba968c4b586fec70af0d060d99d28395ddcf81cf90ca80edbdf",
+    ".factory/workflow/docs.py": "d94e3e549905fb60651950b2705e937603d8cead214349ab967e5745ffff09a8",
     ".factory/workflow/evidence.py": "e6eeb24fdf14ba4d2afe6faebe3e61b1170350ab3ec1c2262641eab45629da45",
     ".factory/workflow/templates/adr.md": "b00c6fe38d06f86e7a5fe55b2c527d983aae91bb6418a83dd869a54787cec036",
     ".factory/workflow/templates/design.md": "ca4e7bd0fa7daf977267cf345abd8c0874759f8d5bbe75e363eb50bfc69ff4e2",
