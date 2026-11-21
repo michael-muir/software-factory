@@ -75,6 +75,8 @@ KIT_FILES = frozenset(
         ".factory/state/state.py",
         ".factory/workflow/docs.py",
         ".factory/workflow/evidence.py",
+        ".factory/workflow/pipeline.md",
+        ".factory/workflow/pipeline.py",
         ".factory/workflow/templates/adr.md",
         ".factory/workflow/templates/design.md",
         ".factory/workflow/templates/pr-evidence.md",
