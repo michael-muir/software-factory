@@ -118,6 +118,50 @@ def _command(value: Any) -> str | None:
     return None if all(item.strip() for item in value) else "must not contain empty items"
 
 
+CHECKPOINTS = ("spec", "design", "merge")  # mirrors pipeline.CHECKPOINTS (E13)
+PLACEHOLDERS = ("{role}", "{allowed_tools}", "{prompt}")  # mirrors pipeline.PLACEHOLDERS
+AGENT_COMMAND = (  # mirrors pipeline.PIPELINE_DEFAULTS["agent_command"] (E13, ADR 0042)
+    "claude",
+    "-p",
+    "--agent",
+    "{role}",
+    "--output-format",
+    "json",
+    "--permission-mode",
+    "acceptEdits",
+    "--permission-prompts",
+    "none",
+    "--allowedTools",
+    "{allowed_tools}",
+    "{prompt}",
+)
+_PLACEHOLDER = re.compile(r"\{[^{}]*\}")
+
+
+def _checkpoints(value: Any) -> str | None:
+    unknown = [item for item in value if item not in CHECKPOINTS]
+    if unknown:
+        return f"unknown checkpoint(s) {', '.join(unknown)}; valid: {', '.join(CHECKPOINTS)}"
+    if len(set(value)) != len(value):
+        return "must not repeat a checkpoint"
+    if "spec" not in value or "merge" not in value:
+        return 'must include "spec" and "merge"'
+    return None
+
+
+def _agent_command(value: Any) -> str | None:
+    if not value:
+        return "must not be empty"
+    if not all(item.strip() for item in value):
+        return "must not contain empty items"
+    for item in value:
+        if _PLACEHOLDER.search(item) and item not in PLACEHOLDERS:
+            return f"{item!r}: a placeholder must be a whole item, one of {', '.join(PLACEHOLDERS)}"
+    if value.count("{prompt}") != 1:
+        return "must contain {prompt} exactly once"
+    return None
+
+
 TOP_LEVEL: dict[str, Field] = {
     "schema_version": Field("int", 1, _equals_one),
 }
@@ -166,6 +210,22 @@ SECTIONS: dict[str, dict[str, Field]] = {
         "job_timeout_minutes": Field("number", 120, _positive, "per job; > 0"),
         "max_parallel": Field("int", 2, _between(1, 64), "jobs at once per daemon; 1 to 64"),
         "worktree_root": Field("str", "", None, 'empty = "../<repo>.worktrees"'),
+    },
+    "pipeline": {
+        "checkpoints": Field(
+            "strlist",
+            ["spec", "merge"],
+            _checkpoints,
+            'human checkpoints; "spec" and "merge" required, "design" optional',
+        ),
+        "agent_command": Field(
+            "strlist",
+            list(AGENT_COMMAND),
+            _agent_command,
+            "a role session; {role}, {allowed_tools}, {prompt} are whole items",
+        ),
+        "forge": Field("str", "github", _one_of("github", "git"), '"github" | "git"'),
+        "gate_retries": Field("int", 2, _between(0, 5), "Debugger sessions on a red gate; 0 to 5"),
     },
     "standards": {
         "packs": Field(
