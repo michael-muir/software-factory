@@ -2,6 +2,7 @@
 
     python .factory/workflow/docs.py [--root PATH] check
     python .factory/workflow/docs.py check-pr [FILE]      # PR evidence; stdin without FILE
+    python .factory/workflow/docs.py check-pr --strict [FILE] [--commits SHA ...]   # E08
 
 Specs (docs/specs/), design notes (docs/design/) and ADRs (docs/adr/) must have the parts their
 templates in templates/ show: a title, a Status line, required lines and headings, and for a
@@ -225,6 +226,115 @@ def lint_pr(text: str, name: str) -> list[Problem]:
     return found
 
 
+PR_EPIC = re.compile(r"^(E\d+)/T\d+|Covers (E\d+)")
+PR_COMMIT = re.compile(r"(?<![0-9A-Za-z])(?=[0-9a-f]*[0-9])[0-9a-f]{7,40}(?![0-9A-Za-z])")
+PR_AC_LINE = re.compile(r"^- \*\*(AC-[^*]+)\*\*")
+BACKTICKED = re.compile(r"`[^`\n]+`")
+PLACEHOLDER = "TODO(author)"
+SHORT_SHA = 12
+
+
+def _raw_section(lines: Sequence[str], heading: str) -> list[str]:
+    """The lines under a heading, fenced blocks included, up to the next ## heading outside one."""
+    out: list[str] = []
+    inside, fenced = False, False
+    for line in lines:
+        if line.startswith("```"):
+            fenced = not fenced
+        if not fenced and line.startswith("## "):
+            if inside:
+                break
+            inside = _has_heading([line], heading)
+            continue
+        if inside:
+            out.append(line)
+    return out
+
+
+def pr_commit(text: str) -> str | None:
+    """The commit the gate evidence names: its first 7-40 lowercase hex word with a digit."""
+    lines = text.replace("\r\n", "\n").split("\n")
+    for line in _raw_section(lines, "## Gate evidence"):
+        found = PR_COMMIT.search(line)
+        if found:
+            return found.group(0)
+    return None
+
+
+def _spec_ids(root: Path, epic: str) -> set[str] | None:
+    folder = root / "docs" / "specs"
+    specs = sorted(folder.glob(f"{epic}-*.md")) if folder.is_dir() else []
+    if not specs:
+        return None
+    return {ac for spec in specs for ac in AC_ID.findall(spec.read_text(encoding="utf-8"))}
+
+
+def commit_problems(text: str, name: str, commits: Sequence[str]) -> list[Problem]:
+    """E08 AC-10: the evidence's commit must be one of the PR's (a full SHA or 7+ prefix)."""
+    evidence = "## Gate evidence"
+    commit = pr_commit(text)
+    if commit is None:
+        return [state.Problem(name, evidence, "no commit SHA")]
+    if any(len(c) >= 7 and (c.startswith(commit) or commit.startswith(c)) for c in commits):
+        return []
+    listed = ", ".join(c[:SHORT_SHA] for c in commits) if commits else "none"
+    message = f"evidence is for {commit}, which is not a commit of this PR (its commits: {listed})"
+    return [state.Problem(name, evidence, message)]
+
+
+def lint_pr_strict(
+    text: str, name: str, root: Path, commits: Sequence[str] | None = None
+) -> list[Problem]:
+    """The rules `check-pr --strict` adds to lint_pr (E08 AC-09, ADR 0025)."""
+    text = text.replace("\r\n", "\n")
+    raw = text.split("\n")
+    lines = _outside_fences(text).split("\n")
+    found: list[Problem] = []
+
+    if commits is None:
+        if pr_commit(text) is None:
+            found.append(state.Problem(name, "## Gate evidence", "no commit SHA"))
+    else:
+        found += commit_problems(text, name, commits)
+
+    trace = "## Acceptance criteria"
+    section = _raw_section(lines, trace)
+    starts = [i for i, line in enumerate(section) if PR_AC_LINE.match(line)]
+    ids: list[str] = []
+    for i in starts:
+        match = PR_AC_LINE.match(section[i])
+        assert match is not None
+        ids.append(match.group(1))
+        block = [section[i]]
+        for line in section[i + 1 :]:
+            if not line.strip() or not line[0].isspace():
+                break
+            block.append(line)
+        if not BACKTICKED.search("\n".join(block)):
+            found.append(state.Problem(name, match.group(1), "lists no test"))
+
+    first = next((line for line in lines if line.strip()), "")
+    epic = PR_EPIC.search(first)
+    if epic is not None:
+        key = epic.group(1) or epic.group(2)
+        known = _spec_ids(root, key)
+        if known is None:
+            found.append(state.Problem(name, trace, f"no spec for {key}"))
+        elif not ids:
+            found.append(state.Problem(name, trace, "no AC lines (- **AC-nn**)"))
+        else:
+            found += [
+                state.Problem(name, ac, f"not in the {key} spec") for ac in ids if ac not in known
+            ]
+
+    found += [
+        state.Problem(name, f"line {n}", f"placeholder left: {PLACEHOLDER}")
+        for n, line in enumerate(raw, start=1)
+        if PLACEHOLDER in line
+    ]
+    return found
+
+
 @dataclass
 class Checked:
     """What validate() read: its problems (iterating gives them) and how many documents."""
@@ -265,8 +375,17 @@ def _check(root: Path, args: argparse.Namespace) -> int:
 
 
 def _check_pr(root: Path, args: argparse.Namespace) -> int:
-    text = Path(args.file).read_text(encoding="utf-8") if args.file else sys.stdin.read()
-    found = lint_pr(text, args.file or "stdin")
+    name = args.file or "stdin"
+    try:
+        text = Path(args.file).read_text(encoding="utf-8") if args.file else sys.stdin.read()
+    except (OSError, UnicodeDecodeError) as exc:
+        print(state.Problem(name, "file", f"cannot read: {exc}"))  # E08 AC-11: not a crash
+        return 1
+    found = lint_pr(text, name)
+    if args.strict:
+        found += lint_pr_strict(text, name, root, args.commits)
+    elif args.commits is not None:
+        found += commit_problems(text, name, args.commits)
     for problem in found:
         print(problem)
     return 1 if found else 0
@@ -283,6 +402,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     ).set_defaults(run=_check)
     check_pr = commands.add_parser("check-pr", help="check PR evidence (stdin without FILE)")
     check_pr.add_argument("file", nargs="?", help="a file holding the PR body")
+    check_pr.add_argument(
+        "--strict", action="store_true", help="also check the commit, the trace and the spec (E08)"
+    )
+    check_pr.add_argument(
+        "--commits",
+        nargs="*",
+        metavar="SHA",
+        help="the PR's commits; the evidence's commit must be one of them (after FILE)",
+    )
     check_pr.set_defaults(run=_check_pr)
     args = parser.parse_args(argv)
     if state is None:
