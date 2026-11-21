@@ -1,0 +1,26 @@
+task = "E18-T2"
+locked = 2026-11-21T23:58:18Z
+
+[[files]]
+path = "tests/_jobs_index.py"
+sha256 = "bde425b0771b9c054e8817e567c34231e53fb730ee8805919e530ac10470bfd4"
+
+[[files]]
+path = "tests/test_jobs_index.py"
+sha256 = "e1655807991204f0905798f073f55471a1f6189d3e180f81483b70c97ddb0329"
+
+[[files]]
+path = "tests/test_jobs_rebuild.py"
+sha256 = "aa6871895557cf63bca3cc070576135eba498024b8bb357c03ed906ab26c395f"
+
+[[files]]
+path = "tests/test_jobs_many.py"
+sha256 = "2dbcb5bd91022099b9ed65c4a28cbc34c8f5d403d39e91a86cd3de9fd5390855"
+
+[[files]]
+path = "tests/fixtures/jobs/index-v0.sqlite"
+sha256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+
+[[files]]
+path = "tests/fixtures/jobs/index-v1.sqlite"
+sha256 = "2022bb7b23e06fbf112b41eb7e2ca7a503918ce2835f2c23a75f8f6b92866b67"
