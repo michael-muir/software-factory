@@ -11,6 +11,7 @@ and each change to it is one atomic file operation (ADR 0030):
     jobs/<id>/commands/0001.toml commands added with `send`
     jobs/<id>/logs/0001.log      output of command 1
     jobs/<id>/closed             no more commands will come
+    jobs/<id>/usage/*.usd        one file per `usage` report: the cost ledger
     jobs/<id>/cancel             `cancel` asks the job's daemon to halt it
     jobs/<id>/handoff.md         the body of the handoff a halt writes in the worktree
     claims/<sha256 of path>      a worktree claim, holding the job id
@@ -22,6 +23,7 @@ Usage:
     run.py submit [--id ID] [--base REF] [--task TASK] [--open] [-- argv ...]
     run.py send <job> -- argv ...
     run.py close <job>
+    run.py usage <job> --usd N
     run.py cancel <job>
     run.py status <job> [--json]
     run.py stop
@@ -36,6 +38,7 @@ import argparse
 import contextlib
 import ctypes
 import datetime as dt
+import decimal
 import hashlib
 import json
 import os
@@ -386,7 +389,27 @@ def job_status(repo: Repo, config: Config, job_id: str) -> dict[str, Any]:
         if n < len(commands):
             commands[n].update(ran)
     data.update(record)
+    data["usd"] = float(usage_total(repo, job_id))  # late reports count too
     return data
+
+
+def _decimal(value: float) -> decimal.Decimal:
+    return decimal.Decimal(str(value))
+
+
+def usage_total(repo: Repo, job_id: str) -> decimal.Decimal:
+    """The job's ledger: one file per `usage` report, so concurrent reports never collide."""
+    folder = repo.job(job_id) / "usage"
+    total = decimal.Decimal(0)
+    if folder.is_dir():
+        for path in folder.iterdir():
+            if path.suffix != ".usd" or path.name.startswith("."):
+                continue
+            try:
+                total += decimal.Decimal(path.read_text(encoding="utf-8").strip())
+            except (OSError, decimal.InvalidOperation):
+                continue
+    return total
 
 
 def _refuse_if_finished(repo: Repo, job_id: str) -> None:
@@ -711,6 +734,7 @@ class _Job:
     worktree: Path
     claim: Path
     proc: Proc | None = None
+    warned: bool = False  # the cost warning is written once
 
 
 class Daemon:
@@ -919,20 +943,23 @@ class Daemon:
             return
         if job.proc is not None:
             code = job.proc.poll()
-            if code is None:
-                return
-            job.proc = None
-            ran = commands[-1]
-            ran["exit_code"] = code
-            ran["duration_s"] = round(max((now - ran["started"]).total_seconds(), 0.0), 3)
-            job.record["turns"] += 1
-            self._save(job.id, job.record)
-            if not job.request["open"] and code != 0:
-                self._end(job, now, "failed", f"command {len(commands)} exited {code}")
-                return
+            if code is not None:
+                job.proc = None
+                ran = commands[-1]
+                ran["exit_code"] = code
+                ran["duration_s"] = round(max((now - ran["started"]).total_seconds(), 0.0), 3)
+                self._save(job.id, job.record)
+                if not job.request["open"] and code != 0:
+                    self._end(job, now, "failed", f"command {len(commands)} exited {code}")
+                    return
+        if self._over_a_cap(job, now) or job.proc is not None:
+            return
         closed = is_closed(self.repo, job.id, job.request)  # before listing: see _send's race
         argvs = [list(c) for c in job.request["commands"]] + sent_commands(self.repo, job.id)
-        if len(commands) < len(argvs):
+        more = len(commands) < len(argvs) or not closed
+        if more and job.record["turns"] >= self.config.max_turns:
+            self.halt(job, now, f"turn cap ({self.config.max_turns})")
+        elif len(commands) < len(argvs):
             self._run_next(job, argvs[len(commands)], now)
         elif closed:
             last = commands[-1]["exit_code"] if commands else 0
@@ -940,6 +967,29 @@ class Daemon:
                 self._end(job, now, "succeeded", "")
             else:
                 self._end(job, now, "failed", f"the last command exited {last}")
+
+    def _over_a_cap(self, job: _Job, now: dt.datetime) -> bool:
+        """The cost and time caps, checked even while a command runs (AC-14, AC-15)."""
+        total = usage_total(self.repo, job.id)
+        if float(total) != job.record["usd"]:
+            job.record["usd"] = float(total)
+            self._save(job.id, job.record)
+        budget = _decimal(self.config.per_job_usd)
+        if not job.warned and total >= budget * _decimal(self.config.warn_at):
+            job.warned = True
+            job.record["warnings"].append(
+                f"cost warning: ${total:.2f} reported, of the ${budget:.2f} per-job budget"
+            )
+            self._save(job.id, job.record)
+        cap = budget * _decimal(self.config.halt_at)
+        if total >= cap:
+            self.halt(job, now, f"cost cap (${cap:.2f})")
+            return True
+        minutes = self.config.job_timeout_minutes
+        if now - job.record["started"] >= dt.timedelta(minutes=minutes):
+            self.halt(job, now, f"time cap ({minutes:g} min)")
+            return True
+        return False
 
     def _run_next(self, job: _Job, argv: list[str], now: dt.datetime) -> None:
         commands: list[dict[str, Any]] = job.record["commands"]
@@ -950,6 +1000,7 @@ class Daemon:
         )
         env = dict(os.environ)
         env["FACTORY_JOB"] = job.id
+        job.record["turns"] += 1  # a command that starts is a turn (AC-13)
         job.proc = self.start(argv, job.worktree, env, log)
         job.record["warnings"].extend(getattr(job.proc, "warnings", []))
         self._save(job.id, job.record)
@@ -964,7 +1015,6 @@ class Daemon:
             ran = job.record["commands"][-1]
             ran["exit_code"] = job.proc.poll()
             ran["duration_s"] = round(max((now - ran["started"]).total_seconds(), 0.0), 3)
-            job.record["turns"] += 1
             job.proc = None
         job.record.update(status="halted", reason=reason, finished=now)
         self._save(job.id, job.record)  # queued commands are dropped: nothing runs them now
@@ -1182,6 +1232,23 @@ def _cancel(args: argparse.Namespace, argv: list[str] | None) -> int:
     return 0
 
 
+def _usage(args: argparse.Namespace, argv: list[str] | None) -> int:
+    if argv is not None:
+        raise BadInput("usage takes no command")
+    try:
+        amount = decimal.Decimal(args.usd.strip())
+    except decimal.InvalidOperation:
+        amount = decimal.Decimal("NaN")
+    if not amount.is_finite() or amount < 0:
+        raise BadInput(f"--usd must be a number, 0 or more, not {args.usd!r}")
+    repo = find_repo(Path.cwd())
+    find_request(repo, args.job)  # an unknown job exits 2; a finished one still counts
+    folder = repo.job(args.job) / "usage"
+    tmp = _temp(folder, f"{amount}\n")
+    os.rename(tmp, folder / f"{time.time_ns()}-{secrets.token_hex(4)}.usd")
+    return 0
+
+
 def _stop(args: argparse.Namespace, argv: list[str] | None) -> int:
     if argv is not None:
         raise BadInput("stop takes no command")
@@ -1256,6 +1323,11 @@ def _parser() -> argparse.ArgumentParser:
     close = commands.add_parser("close", help="say that no more commands will come")
     close.add_argument("job")
     close.set_defaults(run=_close)
+
+    usage = commands.add_parser("usage", help="add dollars to a job's cost ledger")
+    usage.add_argument("job")
+    usage.add_argument("--usd", required=True, help="the amount, a number 0 or more")
+    usage.set_defaults(run=_usage)
 
     cancel = commands.add_parser("cancel", help="halt a job, queued or running")
     cancel.add_argument("job")
