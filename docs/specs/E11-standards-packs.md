@@ -1,7 +1,7 @@
 # E11 · Standards packs (12) — Spec
 
 Issue: [#11](https://github.com/michael-muir/software-factory/issues/11) · Milestone: M1 · Manual factory (alpha) · Depends on: E06 (done)
-Status: **Draft, awaiting product owner approval** · Next: Architect design note and ADRs, then failing tests per AC
+Status: **Approved by the product owner, 21 Nov 2026** · Next: Architect design note and ADRs, then failing tests per AC
 
 ## Goal
 
@@ -157,7 +157,7 @@ The Standards Reviewer (E09) and its `standards-review` skill (E10) already chec
 - **AC-16** The packs and `standards.py` are kit files: `install.py` installs them, `install.py check` passes, and a repo's edit to a kit pack is kept on upgrade (E01). This repo installs them, has a `house` pack with its own conventions (at least 5 rules), and its gate validates every pack.
 - **AC-17** ruff, `ruff format --check` and `mypy --strict` pass. `standards.py` uses only the standard library. The kit layout tests list the new kit files. Every AC above has at least one test tagged `E11-AC-nn`.
 
-## Assumptions (to confirm with approval)
+## Assumptions (confirmed with approval, 21 Nov 2026)
 
 1. **The tool is `.factory/standards/standards.py`**, beside the packs it reads, with `check` and `select` commands. `state.py` and the gate load it by path, as the gate loads `state.py` and `agents.py`, so each still works when it is missing.
 2. **Front matter is TOML between `+++` lines**, as in the role cards (E03) and state files (ADR 0014). It is read with `tomllib`. The rule table is plain Markdown, so agents and people read the same file.
