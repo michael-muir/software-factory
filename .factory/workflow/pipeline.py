@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 """Software Factory full-track pipeline (E13, ADRs 0040 to 0044). Standard library only.
 
+    python .factory/workflow/pipeline.py new <job> --epic EPIC (--request-file FILE | --issue N)
+    python .factory/workflow/pipeline.py run <job> [--session S]
+    python .factory/workflow/pipeline.py approve|reject <job> <checkpoint> --by NAME [--note TEXT]
+    python .factory/workflow/pipeline.py resume <job> [--note TEXT] | cancel <job> | status <job>
     python .factory/workflow/pipeline.py check <job> [<stage>]
     python .factory/workflow/pipeline.py check <stage> --worktree PATH --epic EPIC [--task TASK]
         [--base REF] [--gate-report FILE] [--pr-body FILE] [--job JOB]
@@ -44,6 +48,7 @@ FACTORY = HERE.parent
 DOCS_PATH = HERE / "docs.py"
 EVIDENCE_PATH = HERE / "evidence.py"
 AGENTS_PATH = FACTORY / "agents" / "agents.py"
+STATE_PATH = FACTORY / "state" / "state.py"
 
 JOB_ID = re.compile(r"[a-z0-9][a-z0-9-]{0,29}", re.ASCII)
 EPIC_ID = re.compile(r"E[0-9]+", re.ASCII)
@@ -486,6 +491,21 @@ def _check_build(c: Checkout) -> Found:
 GATE = "gate report"
 
 
+def failed_checks(report: Mapping[str, Any]) -> list[str]:
+    """The names of a gate report's failing checks (`<profile> <check>`, as `gate.py --json-out`
+    writes them), with `locks` and `docs` when they failed."""
+    failed = [
+        " ".join(str(part) for part in (ch.get("profile"), ch.get("check", ch.get("name"))) if part)
+        for ch in report.get("checks", [])
+        if isinstance(ch, dict) and ch.get("status") == "fail"
+    ]
+    if report.get("locks", {}).get("broken"):
+        failed.append("locks")
+    if report.get("docs", {}).get("problems"):
+        failed.append("docs")
+    return failed
+
+
 def _check_gate(c: Checkout) -> Found:
     report = c.gate_report
     if report is None:
@@ -493,13 +513,8 @@ def _check_gate(c: Checkout) -> Found:
     found: Found = []
     verdict = report.get("verdict")
     if verdict != "pass":
-        checks = report.get("checks", [])
-        failed = [str(ch.get("name")) for ch in checks if ch.get("status") == "fail"]
-        if report.get("locks", {}).get("broken"):
-            failed.append("locks")
-        if report.get("docs", {}).get("problems"):
-            failed.append("docs")
-        found.append((GATE, f"the verdict is {verdict}: {', '.join(failed) or 'no check named'}"))
+        failed = ", ".join(failed_checks(report)) or "no check named"
+        found.append((GATE, f"the verdict is {verdict}: {failed}"))
     head = c.head()
     commit = report.get("commit")
     if commit != head:
@@ -570,17 +585,18 @@ def _check_docs(c: Checkout) -> Found:
 BODY = "PR body"
 
 
-def _check_ship(c: Checkout) -> Found:
-    found: Found = []
+def _body_problems(c: Checkout) -> Found:
+    """`check-pr --strict --commits <base..HEAD>` on the PR body: the ship check's first part."""
     if c.pr_body is None:
-        found.append((BODY, "no PR body"))
-    else:
-        docs = _docs()
-        commits = c.commits()
-        problems = docs.lint_pr(c.pr_body, BODY) + docs.lint_pr_strict(
-            c.pr_body, BODY, c.root, commits
-        )
-        found += [(p.path, f"{p.where}: {p.message}") for p in problems]
+        return [(BODY, "no PR body")]
+    docs = _docs()
+    commits = c.commits()
+    problems = docs.lint_pr(c.pr_body, BODY) + docs.lint_pr_strict(c.pr_body, BODY, c.root, commits)
+    return [(p.path, f"{p.where}: {p.message}") for p in problems]
+
+
+def _check_ship(c: Checkout) -> Found:
+    found = _body_problems(c)
     if not c.pr:
         found.append(("PR", "no PR is open for the branch"))
     return found
@@ -668,9 +684,10 @@ def session_argv(template: Sequence[str], role: str, allowed: str, prompt: str) 
     return [values.get(item, item) for item in template]
 
 
-def session_env(role: str) -> dict[str, str]:
-    """What a session's environment adds, so the E03 hook knows the role."""
-    return {"FACTORY_ROLE": role}
+def session_env(role: str, **more: str) -> dict[str, str]:
+    """What a session's environment adds, so the E03 hook knows the role, plus the files the
+    driver hands it (`FACTORY_GATE_REPORT`, `FACTORY_PR_BODY`)."""
+    return {"FACTORY_ROLE": role, **more}
 
 
 def prompt(
@@ -683,8 +700,10 @@ def prompt(
     reads: Sequence[str] = (),
     note: str = "",
     request: str = "",
+    extra: Sequence[str] = (),
 ) -> str:
-    """The stage prompt for one role's session: plain text, the same for the same inputs."""
+    """The stage prompt for one role's session: plain text, the same for the same inputs.
+    `extra` lines say what the driver hands this session (a gate report, where the PR body goes)."""
     found = stage(name)
     if role not in found.roles:
         raise ValueError(f"{role} has no session in the {name} stage")
@@ -704,6 +723,7 @@ def prompt(
         lines.append(f"The last review of this stage said: {note}")
     if request:
         lines.append(f"The request:\n{request.strip()}")
+    lines += extra
     lines.append("Work only in this worktree. Commit your work and stop.")
     return "\n".join(lines)
 
@@ -1042,6 +1062,101 @@ def runner_for(root: Path) -> Runner:
     return CliRunner(root)
 
 
+# --- forges (ADR 0043) --------------------------------------------------------------------------
+
+
+class ForgeError(Exception):
+    """The forge refused or failed a call."""
+
+
+class Forge(Protocol):
+    """Where PRs open and merge: one small interface, so other forges can be added."""
+
+    def open(self, branch: str, base: str, title: str, body: str) -> str: ...  # the PR's ref
+    def state(self, ref: str, branch: str, base: str, head: str) -> str: ...  # open|merged|closed
+
+
+class GitHubForge:
+    """GitHub's REST API through `gh api`, never GraphQL; owner and repo from origin's URL."""
+
+    def __init__(self, root: Path) -> None:
+        self.root = root
+
+    def _api(self, path: str, *fields: str) -> dict[str, Any]:
+        gh = shutil.which("gh")
+        if gh is None:
+            raise ForgeError("the github forge needs the gh command")
+        try:
+            endpoint = f"repos/{_github_repo(self.root)}/{path}"
+        except BadInput as exc:
+            raise ForgeError(str(exc)) from None
+        try:
+            done = subprocess.run(
+                [gh, "api", endpoint, *fields],
+                cwd=self.root,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                check=False,
+            )
+        except OSError as exc:
+            raise ForgeError(f"cannot run gh: {exc}") from None
+        if done.returncode != 0:
+            raise ForgeError(f"gh api {endpoint}: {done.stderr.strip() or done.stdout.strip()}")
+        try:
+            data = json.loads(done.stdout)
+        except json.JSONDecodeError:
+            raise ForgeError(f"gh api {endpoint} gave no JSON") from None
+        if not isinstance(data, dict):
+            raise ForgeError(f"gh api {endpoint} gave no JSON object")
+        return data
+
+    def open(self, branch: str, base: str, title: str, body: str) -> str:
+        with tempfile.TemporaryDirectory(prefix="factory-pr-") as temp:
+            path = Path(temp) / "body.md"
+            path.write_bytes(body.encode("utf-8"))
+            fields = ["-f", f"title={title}", "-f", f"head={branch}", "-f", f"base={base}"]
+            data = self._api("pulls", *fields, "-F", f"body=@{path}")
+        number = data.get("number")
+        if isinstance(number, bool) or not isinstance(number, int):
+            raise ForgeError("the new PR has no number")
+        return str(number)
+
+    def state(self, ref: str, branch: str, base: str, head: str) -> str:
+        data = self._api(f"pulls/{ref}")
+        if data.get("merged") is True:
+            return "merged"
+        return "closed" if data.get("state") == "closed" else "open"
+
+
+class GitForge:
+    """Plain git, for tests and forge-less repos: the pushed branch is the PR."""
+
+    def __init__(self, root: Path) -> None:
+        self.root = root
+
+    def open(self, branch: str, base: str, title: str, body: str) -> str:
+        return branch
+
+    def state(self, ref: str, branch: str, base: str, head: str) -> str:
+        try:
+            _git(self.root, "fetch", "-q", "origin")
+            listed = _git(self.root, "ls-remote", "--heads", "origin", f"refs/heads/{branch}")
+        except GitError as exc:
+            raise ForgeError(f"git: {exc}") from None
+        try:
+            _git(self.root, "merge-base", "--is-ancestor", head, f"origin/{base}")
+            return "merged"
+        except GitError:
+            return "open" if listed.strip() else "closed"
+
+
+def forge_for(root: Path, name: str) -> Forge:
+    """The forge `pipeline.forge` names."""
+    return GitHubForge(root) if name == "github" else GitForge(root)
+
+
 def _jobs() -> Any:
     """E18's jobs.py, by path: its API is a contract E18's tests pin."""
     return _load(JOBS_PY, "factory_pipeline_jobs")
@@ -1113,6 +1228,11 @@ class Job:
         text = dump_record(self.record)
         self.jobs.write_sidecar(self.repo, self.id, "pipeline", text, self.session)
 
+    def write_summary(self, text: str) -> None:
+        """The learn stage's sidecar, `work/<id>.summary.toml`."""
+        self.beat()
+        self.jobs.write_sidecar(self.repo, self.id, "summary", text, self.session)
+
     def set_e18(self, **fields: str) -> None:
         current = self.jobs.read_job(self.repo, self.id)
         changed = {k: v for k, v in fields.items() if current.get(k) != v}
@@ -1140,7 +1260,8 @@ E18_STATUS = {
 # --- the driver (ADR 0041) ----------------------------------------------------------------------
 
 STOP_OK, STOP_HUMAN, GO = 0, 1, -1
-LATER_STAGES = ("gate", "review", "docs", "ship", "learn")  # driven from E13-T3
+DRIVER_ROLES = ("gate", "commit", "round", "push")  # commands the driver sends itself
+SCRATCH = "factory-pipeline"  # in the runner worktree's own git dir: never tracked or dirty
 
 
 class Driver:
@@ -1152,6 +1273,7 @@ class Driver:
         self.poll = poll
         self.config = load_config(job.root)
         self.pipeline = pipeline_config(self.config)
+        self.forge = forge_for(job.root, str(self.pipeline["forge"]))
 
     @property
     def rec(self) -> dict[str, Any]:
@@ -1165,12 +1287,17 @@ class Driver:
             raise Refused(f"job {self.job.id} is {status}")
         if status == "needs-human":
             raise Refused(f"job {self.job.id} needs a human: {self.rec['reason']}")
-        if status in ("awaiting-approval", "awaiting-merge"):
+        if status == "awaiting-approval":
             print(f"{self.job.id}: {status} at the {self.rec['stage']} stage")
             return STOP_OK
-        self.rec["status"] = "running"
-        self.job.save()
-        self._sync_e18()
+        if status == "awaiting-merge":
+            code = self._await_merge()
+            if code != GO:
+                return code
+        else:
+            self.rec["status"] = "running"
+            self.job.save()
+            self._sync_e18()
         while True:
             code = self.step()
             if code != GO:
@@ -1179,17 +1306,25 @@ class Driver:
 
     def step(self) -> int:
         current = stage(self.rec["stage"])
-        if current.name in LATER_STAGES:
-            return self._stop(f"the {current.name} stage is driven from E13-T3, not yet built")
+        if current.name == "learn":
+            return self._learn()
         task = self._task()
         outstanding = self._outstanding()
         if outstanding is not None:
             return self._collect(outstanding)
-        done = {s["role"] for s in self._sessions(current.name, task) if s.get("exit_code") == 0}
-        pending = [role for role in current.roles if role not in done]
-        if pending:
-            return self._send(current, task, pending[0])
-        return self._judge(current, task)
+        sessions = self._sessions(current.name, task)
+        plan = SLICE_PLANS.get(current.name)
+        if plan is None:
+            done = {s["role"] for s in sessions if s.get("exit_code") == 0}
+            pending = [role for role in current.roles if role not in done]
+            if pending:
+                return self._send(current, task, pending[0])
+            return self._judge(current, task)
+        try:
+            run = self._open_run(task) or self._new_run(current, task)
+        except _Stop as stop:
+            return self._stop(str(stop))
+        return plan(self, current, task, run, sessions)
 
     # -- the parts of a step
 
@@ -1255,8 +1390,11 @@ class Driver:
         match = re.search(r"-T(\d+)$", task)
         return int(match.group(1)) if match else 0
 
+    def _base_ref(self) -> str:
+        return str(self.config.get("gates", {}).get("base_ref", self.rec["base"]) or "main")
+
     def _origin_base(self) -> str:
-        ref = str(self.config.get("gates", {}).get("base_ref", self.rec["base"]) or "main")
+        ref = self._base_ref()
         try:
             _resolve(self.job.root, f"origin/{ref}")
             return f"origin/{ref}"
@@ -1287,13 +1425,20 @@ class Driver:
                 return str(decision.get("note", ""))
         return ""
 
-    def _send(self, current: Stage, task: str, role: str) -> int:
+    def _send(
+        self,
+        current: Stage,
+        task: str,
+        role: str,
+        *,
+        env: Mapping[str, str] | None = None,
+        extra: Sequence[str] = (),
+    ) -> int:
+        """Send one role's session, as the role, with its allow-list and the stage prompt."""
         try:
             run = self._open_run(task) or self._new_run(current, task)
         except _Stop as stop:
             return self._stop(str(stop))
-        if current.name not in run["stages"]:
-            run["stages"].append(current.name)
         worktree = Path(run["worktree"])
         text = prompt(
             current.name,
@@ -1304,11 +1449,27 @@ class Driver:
             reads=self._reads(current, task, worktree),
             note=self._note(current.name, task),
             request=self.rec["request"] if current.name == "spec" else "",
+            extra=extra,
         )
         allowed = role_allowed_tools(self.job.root, role)
         argv = session_argv(self.pipeline["agent_command"], role, allowed, text)
-        env = [f"{k}={v}" for k, v in session_env(role).items()]
-        wrapped = [sys.executable, str(Path(__file__).resolve()), "_env", *env, "--", *argv]
+        pairs = [f"{k}={v}" for k, v in session_env(role, **(env or {})).items()]
+        wrapped = [sys.executable, str(Path(__file__).resolve()), "_env", *pairs, "--", *argv]
+        return self._command(current, task, run, role, wrapped)
+
+    def _command(
+        self,
+        current: Stage,
+        task: str,
+        run: dict[str, Any],
+        role: str,
+        argv: Sequence[str],
+        **more: str,
+    ) -> int:
+        """Write the command down, then send it on the runner job (so a crash never sends it
+        twice). `role` is the session's role, or one of DRIVER_ROLES."""
+        if current.name not in run["stages"]:
+            run["stages"].append(current.name)
         try:
             index = len(self.runner.status(run["id"]).get("commands", [])) + 1
         except RunnerError as exc:
@@ -1322,7 +1483,8 @@ class Driver:
                 "role": role,
                 "attempt": self._attempt(),
                 "sent": _now(),
-                "argv": wrapped,
+                "argv": list(argv),
+                **more,
             }
         )
         self.job.save()  # written down before it's sent
@@ -1355,11 +1517,16 @@ class Driver:
             time.sleep(self.poll)
             return GO
         code = int(ran["exit_code"])
-        self._finish(session, code, Path(str(ran.get("log", ""))))
+        ours = session["role"] in DRIVER_ROLES
+        self._finish(session, code, None if ours else Path(str(ran.get("log", ""))))
         if status.get("status") in ("halted", "failed"):
             return self._stop(_halted(session, status))
+        if session["role"] == "gate":
+            problem = self._take_report(session, code)
+            return GO if problem is None else self._stop(problem)
         if code != 0:
-            return self._stop(f"{session['stage']}: the {session['role']} session exited {code}")
+            what = "command" if ours else "session"
+            return self._stop(f"{session['stage']}: the {session['role']} {what} exited {code}")
         return GO
 
     def _finish(self, session: dict[str, Any], code: int, log: Path | None = None) -> None:
@@ -1381,15 +1548,18 @@ class Driver:
             entry["usd"] = usd
         self.job.save()
 
+    def _checkout(self, task: str, run: Mapping[str, Any], **facts: Any) -> Checkout:
+        root = Path(run["worktree"])
+        runs = [r for r in self.rec["runs"] if r.get("task") == task]
+        base = _resolve(root, runs[0]["base"])
+        found = {**_record_facts(self.rec, task), **facts}
+        return Checkout(root=root, epic=self.rec["epic"], task=task, base=base, **found)
+
     def _judge(self, current: Stage, task: str) -> int:
         run = self._open_run(task)
         if run is None:
             return self._stop(f"{current.name}: no runner job is open for {task}")
-        root = Path(run["worktree"])
-        facts = _record_facts(self.rec, task)
-        runs = [r for r in self.rec["runs"] if r.get("task") == task]
-        base = _resolve(root, runs[0]["base"])
-        checkout = Checkout(root=root, epic=self.rec["epic"], task=task, base=base, **facts)
+        checkout = self._checkout(task, run)
         problems = check(current.name, checkout)
         if problems:
             return self._stop("; ".join(str(p) for p in problems))
@@ -1420,8 +1590,15 @@ class Driver:
                 self.rec["tasks"].append({"id": task, "branch": "", "pr": "", "merged": False})
         self.job.save()
 
+    def _entry(self, task: str) -> dict[str, Any]:
+        for entry in self.rec["tasks"]:
+            if entry.get("id") == task:
+                return dict_of(entry)
+        raise _Stop(f"{task} is not one of the job's tasks")
+
     def _advance(self) -> None:
-        """Move to the next stage (spec AC-05: the only way forward)."""
+        """Move to the next stage (spec AC-05: the only way forward). After a merge, the next
+        unmerged task starts at the test stage; after the last, the job goes on to learn."""
         old = stage(self.rec["stage"])
         index = STAGE_NAMES.index(old.name)
         nxt = STAGES[index + 1]
@@ -1432,6 +1609,11 @@ class Driver:
             if not self.rec["tasks"]:
                 raise _Stop("design: the design made no tasks")
             self.rec["task"] = self.rec["tasks"][0]["id"]
+        if old.name == "ship":
+            left = [t for t in self.rec["tasks"] if not t.get("merged")]
+            if left:
+                self.rec["task"] = left[0]["id"]
+                nxt = stage("test")
         self.rec["stage"] = nxt.name
         self.rec["attempt"] = 1
         self.job.save()
@@ -1471,6 +1653,366 @@ class Driver:
             fields["branch"] = str(run["branch"])
             fields["worktree"] = str(run["worktree"])
         self.job.set_e18(**fields)
+
+    # -- the slice stages the driver takes part in (spec AC-12 to AC-16)
+
+    def _commit_argv(self, message: str, paths: Sequence[str]) -> list[str]:
+        return [sys.executable, str(Path(__file__).resolve()), "_commit", message, "--", *paths]
+
+    def _gate_command(self, current: Stage, task: str, run: dict[str, Any]) -> int:
+        """The full gate, as a runner command, with its JSON report in the scratch folder."""
+        n = sum(1 for s in self.rec["sessions"] if s.get("role") == "gate") + 1
+        out = _scratch(Path(run["worktree"])) / f"gate-{n}.json"
+        python = [str(item) for item in self.config.get("gates", {}).get("python_command", [])]
+        argv = [*(python or ["python"]), ".factory/gates/gate.py", "--json-out", str(out)]
+        return self._command(current, task, run, "gate", argv, out=str(out))
+
+    def _take_report(self, session: Mapping[str, Any], code: int) -> str | None:
+        """Read a finished gate's JSON report into the record; a problem if there is none."""
+        out = Path(str(session.get("out", "")))
+        try:
+            report = json.loads(out.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+            report = None
+        if not isinstance(report, dict) or "verdict" not in report:
+            return f"gate: the gate (exit {code}) wrote no JSON report to {out}"
+        self.rec["gates"].append(
+            {
+                "task": session["task"],
+                "commit": str(report.get("commit", "")),
+                "verdict": str(report["verdict"]),
+                "run": session["run"],
+                "index": session["index"],
+                "report": json.dumps(report),
+            }
+        )
+        self.job.save()
+        return None
+
+    def _latest_gate(self, task: str) -> dict[str, Any] | None:
+        gates = [g for g in self.rec["gates"] if g.get("task") == task]
+        return gates[-1] if gates else None
+
+    def _hand_report(self, task: str, run: Mapping[str, Any]) -> tuple[Path, dict[str, Any]]:
+        """Put the task's newest gate report in the worktree's scratch folder for a session."""
+        latest = self._latest_gate(task)
+        if latest is None:
+            raise _Stop(f"{self.rec['stage']}: no gate report for {task}")
+        path = _scratch(Path(run["worktree"])) / "gate-report.json"
+        path.write_text(str(latest["report"]), encoding="utf-8")
+        return path, dict(json.loads(str(latest["report"])))
+
+    def _gate(
+        self, current: Stage, task: str, run: dict[str, Any], sessions: list[dict[str, Any]]
+    ) -> int:
+        """Gate, then the Debugger and the gate again on red, up to `gate_retries` times."""
+        if not sessions or sessions[-1]["role"] != "gate":
+            return self._gate_command(current, task, run)
+        latest = self._latest_gate(task)
+        if latest is not None and latest.get("verdict") == "pass":
+            return self._judge(current, task)
+        debugged = sum(1 for s in sessions if s["role"] == "debugger")
+        if debugged >= int(self.pipeline["gate_retries"]):
+            return self._judge(current, task)
+        try:
+            path, report = self._hand_report(task, run)
+        except _Stop as stop:
+            return self._stop(str(stop))
+        failed = ", ".join(failed_checks(report)) or "no check named"
+        commit = str(report.get("commit", ""))[:SHORT]
+        line = (
+            f"The full gate failed on {commit}: {failed}. Its JSON report is {path} "
+            "($FACTORY_GATE_REPORT). Fix the cause, commit, and stop: the driver runs the gate "
+            "again."
+        )
+        env = {"FACTORY_GATE_REPORT": str(path)}
+        return self._send(current, task, "debugger", env=env, extra=[line])
+
+    def _review(
+        self, current: Stage, task: str, run: dict[str, Any], sessions: list[dict[str, Any]]
+    ) -> int:
+        """The Verifier and the five reviewers, each in its own session; the driver commits the
+        task file's findings after each, then sets the review round to 1."""
+        root = Path(run["worktree"])
+        rel = f".agentic/tasks/{task}.md"
+        if _dirty(root, rel):
+            last = sessions[-1]["role"] if sessions else ""
+            if last == "commit":
+                return self._stop(f"review: {rel} is still uncommitted after the findings commit")
+            what = {"round": "review round 1", "": "the task file before review"}.get(
+                last, f"review findings from {last}"
+            )
+            argv = self._commit_argv(f"chore({task}): {what}", [rel])
+            return self._command(current, task, run, "commit", argv)
+        done = {s["role"] for s in sessions if s.get("exit_code") == 0}
+        pending = [role for role in REVIEWERS if role not in done]
+        if pending:
+            return self._send(current, task, pending[0])
+        if _review_round(root / rel) != 1 and "round" not in done:
+            argv = [sys.executable, str(STATE_PATH), "task", "set", task, "--round", "1"]
+            return self._command(current, task, run, "round", argv)
+        self._keep_findings(root, task)
+        return self._judge(current, task)
+
+    def _keep_findings(self, root: Path, task: str) -> None:
+        """The task's committed findings, kept in the record for the job's summary."""
+        try:
+            text = _git(root, "show", f"HEAD:.agentic/tasks/{task}.md")
+        except GitError:
+            return
+        parsed = _state().parse(text)
+        findings = [] if isinstance(parsed, str) else parsed[0].get("findings", [])
+        kept = [
+            {str(k): str(v) for k, v in f.items()}
+            for f in (findings if isinstance(findings, list) else [])
+            if isinstance(f, dict)
+        ]
+        self._entry(task)["findings"] = json.dumps(kept)
+        self.job.save()
+
+    def _docs(
+        self, current: Stage, task: str, run: dict[str, Any], sessions: list[dict[str, Any]]
+    ) -> int:
+        """The docs-writer's entry (committed by the driver: the role has no shell), then the
+        full gate again on the new head."""
+        root = Path(run["worktree"])
+        done = {s["role"] for s in sessions if s.get("exit_code") == 0}
+        if "docs-writer" not in done:
+            return self._send(current, task, "docs-writer")
+        if _dirty(root):
+            if sessions[-1]["role"] == "commit":
+                return self._stop("docs: the tree is still dirty after the docs commit")
+            argv = self._commit_argv(f"docs({task}): changelog entry from the docs-writer", ["."])
+            return self._command(current, task, run, "commit", argv)
+        latest = self._latest_gate(task)
+        head = _git(root, "rev-parse", "HEAD").strip()
+        gated = any(s["role"] == "gate" for s in sessions)
+        if not gated and (latest is None or latest.get("commit") != head):
+            return self._gate_command(current, task, run)
+        return self._judge(current, task)
+
+    def _ship(
+        self, current: Stage, task: str, run: dict[str, Any], sessions: list[dict[str, Any]]
+    ) -> int:
+        """The Integrator's body, `check-pr --strict`, the push, then the forge opens the PR."""
+        root = Path(run["worktree"])
+        done = {s["role"] for s in sessions if s.get("exit_code") == 0}
+        body_path = _scratch(root) / "pr-body.md"
+        branch = f"factory/{self.job.id}-t{self._task_number(task)}"
+        try:
+            entry = self._entry(task)
+            if "integrator" not in done:
+                report, _ = self._hand_report(task, run)
+                body_path.unlink(missing_ok=True)
+                env = {"FACTORY_PR_BODY": str(body_path), "FACTORY_GATE_REPORT": str(report)}
+                line = (
+                    f"Write the filled-in PR body to {body_path} ($FACTORY_PR_BODY), drafted "
+                    f"from the gate report {report} ($FACTORY_GATE_REPORT). Don't push or open "
+                    "the PR: the driver does, once the body passes check-pr --strict."
+                )
+                return self._send(current, task, "integrator", env=env, extra=[line])
+            if "push" not in done:
+                return self._check_and_push(current, task, run, entry, body_path, branch)
+        except _Stop as stop:
+            return self._stop(str(stop))
+        if entry.get("opened") != self._attempt():
+            body = str(entry.get("pr_body", ""))
+            try:
+                ref = self.forge.open(branch, self._base_ref(), pr_title(body), body)
+            except ForgeError as exc:
+                return self._stop(f"ship: the forge didn't open the PR: {exc}")
+            head = _git(root, "rev-parse", "HEAD").strip()
+            entry.update(pr=ref, branch=branch, head=head, opened=self._attempt(), merged=False)
+            self.job.save()
+        return self._judge(current, task)
+
+    def _check_and_push(
+        self,
+        current: Stage,
+        task: str,
+        run: dict[str, Any],
+        entry: dict[str, Any],
+        body_path: Path,
+        branch: str,
+    ) -> int:
+        try:
+            body = body_path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            return self._stop(f"ship: {BODY}: the integrator wrote none to {body_path}")
+        entry["pr_body"] = body
+        self.job.save()
+        checkout = self._checkout(task, run, pr_body=body)
+        problems = [Problem(path, "ship", message) for path, message in _body_problems(checkout)]
+        if problems:
+            return self._stop("; ".join(str(p) for p in problems))
+        argv = ["git", "push", "origin", f"HEAD:refs/heads/{branch}"]
+        return self._command(current, task, run, "push", argv)
+
+    def _await_merge(self) -> int:
+        """`run` at the merge checkpoint: nothing changes until a human has merged the PR."""
+        task = self._task()
+        try:
+            entry = self._entry(task)
+        except _Stop as stop:
+            return self._stop(str(stop))
+        ref = str(entry.get("pr", ""))
+        try:
+            state = self.forge.state(
+                ref, str(entry.get("branch", "")), self._base_ref(), str(entry.get("head", ""))
+            )
+        except ForgeError as exc:
+            print(f"{self.job.id}: can't read the PR {ref}: {exc}", file=sys.stderr)
+            return STOP_HUMAN
+        if state == "open":
+            print(f"{self.job.id}: awaiting-merge of {ref} for {task}")
+            return STOP_OK
+        self.rec["status"] = "running"
+        if state != "merged":
+            return self._stop(f"ship: the PR {ref} for {task} was closed without merging")
+        entry["merged"] = True
+        try:
+            _git(self.job.root, "fetch", "-q", "origin")
+        except GitError as exc:
+            return self._stop(f"ship: {task} merged, but git fetch origin failed: {exc}")
+        self._advance()
+        return GO
+
+    # -- learn (spec AC-17)
+
+    def _learn(self) -> int:
+        summary = self._summary()
+        self.job.write_summary(dump_tables(summary, SUMMARY_TABLES))
+        tasks = tuple((str(t.get("id")), bool(t.get("merged"))) for t in self.rec["tasks"])
+        checkout = Checkout(root=self.job.root, epic=self.rec["epic"], tasks=tasks, summary=summary)
+        problems = check("learn", checkout)
+        if problems:
+            return self._stop("; ".join(str(p) for p in problems))
+        self.rec["status"], self.rec["reason"] = "done", ""
+        self.job.save()
+        self._sync_e18()
+        print(f"{self.job.id}: done")
+        return STOP_OK
+
+    def _summary(self) -> dict[str, Any]:
+        rec = self.rec
+        total = sum(
+            (decimal.Decimal(str(s.get("usd", "0"))) for s in rec["sessions"]),
+            start=decimal.Decimal(0),
+        )
+        findings = [
+            {"task": str(t.get("id")), **finding}
+            for t in rec["tasks"]
+            for finding in json.loads(str(t.get("findings") or "[]"))
+        ]
+        prs = [
+            {
+                "task": str(t.get("id")),
+                "pr": str(t.get("pr", "")),
+                "branch": str(t.get("branch", "")),
+                "merged": bool(t.get("merged")),
+            }
+            for t in rec["tasks"]
+        ]
+        gates = [
+            {
+                "task": str(g.get("task")),
+                "commit": str(g.get("commit")),
+                "verdict": str(g.get("verdict")),
+            }
+            for g in rec["gates"]
+        ]
+        title = str(self.job.jobs.read_job(self.job.repo, self.job.id).get("title", ""))
+        usd = str(total.normalize()) if total else "0"
+        return {
+            "version": 1,
+            "job": rec["id"],
+            "epic": rec["epic"],
+            "issue": rec["issue"],
+            "title": title,
+            "status": "done",
+            "finished": _now(),
+            "total_usd": usd,
+            "handoff": _closing_handoff(rec, title, usd, prs, findings),
+            "stages": _stages(rec),
+            "gates": gates,
+            "findings": findings,
+            "prs": prs,
+        }
+
+
+SLICE_PLANS: dict[str, Callable[..., int]] = {
+    "gate": Driver._gate,
+    "review": Driver._review,
+    "docs": Driver._docs,
+    "ship": Driver._ship,
+}
+SUMMARY_TABLES = ("stages", "gates", "findings", "prs")
+
+
+def dict_of(entry: Any) -> dict[str, Any]:
+    """A record table entry, as the mutable dict it is."""
+    assert isinstance(entry, dict)
+    return entry
+
+
+def _scratch(worktree: Path) -> Path:
+    """The runner worktree's scratch folder, in its own git dir (created if missing)."""
+    path = Path(
+        _git(worktree, "rev-parse", "--path-format=absolute", "--git-path", SCRATCH).strip()
+    )
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def _dirty(root: Path, *paths: str) -> bool:
+    return bool(_git(root, "status", "--porcelain", "--", *(paths or (".",))).strip())
+
+
+def _review_round(path: Path) -> object:
+    try:
+        parsed = _state().parse(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError):
+        return None
+    return None if isinstance(parsed, str) else parsed[0].get("review_round")
+
+
+def pr_title(body: str) -> str:
+    """The PR's title: the body's first line, up to its first full stop."""
+    first = next((line.strip() for line in body.splitlines() if line.strip()), "")
+    return re.split(r"\.(?:\s|$)", first, maxsplit=1)[0].strip() or "Untitled"
+
+
+def _closing_handoff(
+    rec: Mapping[str, Any],
+    title: str,
+    usd: str,
+    prs: Sequence[Mapping[str, Any]],
+    findings: Sequence[Mapping[str, Any]],
+) -> str:
+    """The closing handoff, in E02's form: what shipped, what's left, the open questions."""
+    lines = ["## Done", "", f"- Job {rec['id']} ({rec['epic']}): {title}. Every slice merged:"]
+    lines += [f"  - {p['task']}: PR {p['pr']} on {p['branch']}, merged." for p in prs]
+    lines += [f"- The sessions reported ${usd} in all.", "", "## Next", ""]
+    left = [f for f in findings if f.get("status") == "open"]
+    if left:
+        lines.append("- Follow up the findings still open:")
+        lines += [
+            f"  - {f['task']} {f.get('id')} [{f.get('severity')}] {f.get('summary')}" for f in left
+        ]
+    else:
+        lines.append("- Nothing is left in this job: no finding is open.")
+    lines += ["", "## Open questions", "", "None.", ""]
+    return "\n".join(lines)
+
+
+def dump_tables(data: Mapping[str, Any], tables: Sequence[str]) -> str:
+    """A flat TOML document: the scalars in order, then each table's entries."""
+    lines = [f"{key} = {_toml(value)}" for key, value in data.items() if key not in tables]
+    for table in tables:
+        for entry in data.get(table, []):
+            lines += ["", f"[[{table}]]"]
+            lines += [f"{key} = {_toml(value)}" for key, value in entry.items()]
+    return "\n".join(lines) + "\n"
 
 
 class _Stop(Exception):
@@ -1634,7 +2176,12 @@ def _title_of(text: str) -> str:
 
 
 def _github_repo(root: Path) -> str:
-    url = _git(root, "remote", "get-url", "origin").strip()
+    """`<owner>/<repo>` from origin's configured URL (https or ssh form), as written: an
+    `insteadOf` rewrite changes where git goes, not which GitHub repository it is."""
+    try:
+        url = _git(root, "config", "--get", "remote.origin.url").strip()
+    except GitError:
+        raise BadInput("the repo has no origin remote") from None
     match = re.search(r"github\.com[:/]([^/]+)/([^/]+?)(?:\.git)?/?$", url)
     if not match:
         raise BadInput(f"origin ({url}) is not a GitHub repository")
@@ -1757,10 +2304,12 @@ def _status(args: argparse.Namespace) -> int:
         job = jobs.read_job(jobs.find_repo(here), args.job)
     except jobs.BadInput as exc:
         raise BadInput(str(exc)) from None
+    summary = _read_summary(here, args.job)
     data = {
         "job": json.loads(json.dumps(job, default=str)),
         "pipeline": record,
         "stages": _stages(record),
+        "summary": summary,
     }
     if args.json:
         print(json.dumps(data, indent=2))
@@ -1775,6 +2324,15 @@ def _status(args: argparse.Namespace) -> int:
     for decision in record["decisions"]:
         who = f"{decision['verdict']} by {decision['by']} at {decision['at']}"
         print(f"  {decision['checkpoint']} {who}")
+    for entry in record["tasks"]:
+        merged = "merged" if entry.get("merged") else "not merged"
+        print(f"  {entry.get('id')}: PR {entry.get('pr') or '-'}, {merged}")
+    if summary is not None:
+        usd, when = summary.get("total_usd", "0"), summary.get("finished", "")
+        print(f"  summary: ${usd} in all, finished {when}")
+        print("  closing handoff:")
+        for line in str(summary.get("handoff", "")).splitlines():
+            print(f"    {line}" if line else "")
     return 0
 
 
@@ -1849,6 +2407,20 @@ def _env(argv: Sequence[str]) -> int:
     if not command:
         raise BadInput("_env needs a command")
     return subprocess.run(command, env=env, check=False).returncode
+
+
+def _commit(argv: Sequence[str]) -> int:
+    """`_commit MESSAGE -- PATH...`: commit what changed under the paths, if anything did. The
+    driver sends it for roles that can't commit (the reviewers' findings, the docs-writer)."""
+    if len(argv) < 3 or argv[1] != "--":
+        raise BadInput("_commit needs a message, then -- and the paths")
+    message, paths = argv[0], list(argv[2:])
+    root = Path.cwd()
+    _git(root, "add", "-A", "--", *paths)
+    if not _git(root, "diff", "--cached", "--name-only", "--", *paths).strip():
+        return 0
+    _git(root, "commit", "-q", "-m", message, "--", *paths)
+    return 0
 
 
 # --- the command line ---------------------------------------------------------------------------
@@ -2030,6 +2602,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         if argv[:1] == ["_env"]:
             return _env(argv[1:])
+        if argv[:1] == ["_commit"]:
+            return _commit(argv[1:])
         args = _parser().parse_args(argv)
     except SystemExit as exc:
         return exc.code if isinstance(exc.code, int) else 2
