@@ -111,7 +111,7 @@ from = ""               # the session it was taken from, when forced
 
 **Keeping it current:**
 
-- **Writes:** every `jobs.py` write updates its rows in the same transaction as its lease check. `run.py`'s hooks (T3) call `jobs.refresh_runner(common_dir, runner_id)`, which re-reads that one runner job's files and replaces its rows.
+- **Writes:** every `jobs.py` write updates its rows in the same transaction as its lease check. `run.py`'s hooks (T3) call `jobs.refresh_runner(repo, runner_id)`, which re-reads that one runner job's files and replaces its rows.
 - **Reads:** before answering, `show` and `resume` refresh the job's own record, its runner jobs and the worktree it names. `list` refreshes every record and every worktree. A refresh is one transaction, so a reader never sees half of it.
 - **Rebuild:** `rebuild` and migrations run the same code. In one `BEGIN IMMEDIATE`, it deletes every derived row and re-reads every file. The live tables, `leases` and `daemons`, are kept, except for the leases of jobs that no longer exist. The swap is atomic for readers, and there is no `os.replace` of an open database on Windows. The spec's "replaces the old one atomically" is met by the transaction.
 - **A damaged index:** a `sqlite3.DatabaseError` on open, or a `PRAGMA quick_check` that isn't `ok`. (Changed in T2: `quick_check` runs on every open, not only after an error. Damage found partway through a command could otherwise only be reported, not rebuilt. It costs a few milliseconds on an index this size.) The tool then moves the file aside as `index.sqlite.damaged-<time>` with `os.replace`, prints a warning, creates a new index and rebuilds it. If the move fails because another process holds the file (Windows), it exits 2 and says to stop the other factory processes and run `rebuild`.
@@ -147,8 +147,8 @@ All times are Unix seconds from `time.time()`. The clock is passed into the API,
 
 - **`beat`:** renews a lease the session holds, live or expired, by `now + minutes × 60`. With no row at all, and the session being the record's `owner` (after a lost index), it creates the row. Anyone else gets exit 1. Renewing an expired lease is allowed, because a session that comes back before anyone else claims the job is still its owner.
 - **`release`:** deletes the holder's row. Anyone else gets exit 1.
-- **Renewal by the runner (T3):** `jobs.renew_for_task(common_dir, task, now)` finds the live job whose `job_tasks` holds the task, and extends its lease to `now + minutes × 60`, only while the lease is still live. It never revives a crashed job.
-- **Daemons (T3):** `jobs.daemon_beat(common_dir, daemon_id, now)` upserts the daemon's row. A daemon is `dead` when `now - beat > daemon_timeout_seconds`. A runner job is `stale` when its record says `running` and its `daemon` is dead or has no row. After a lost index, a dead daemon has no row: its jobs show as stale until a live daemon writes a row.
+- **Renewal by the runner (T3):** `jobs.renew_for_task(repo, task, now)` finds the live job whose `job_tasks` holds the task, and extends its lease to `now + minutes × 60`, only while the lease is still live. It never revives a crashed job.
+- **Daemons (T3):** `jobs.daemon_beat(repo, daemon_id, now)` upserts the daemon's row. A daemon is `dead` when `now - beat > daemon_timeout_seconds`. A runner job is `stale` when its record says `running` and its `daemon` is dead or has no row. After a lost index, a dead daemon has no row: its jobs show as stale until a live daemon writes a row.
 - **Sessions:** `--session`, else `FACTORY_SESSION`, else `s-<host>-<pid>-<4 hex>`, with the host cut down to `[a-z0-9-]`. A given id must match `[A-Za-z0-9._:@-]{1,64}`.
 - **The index is needed:** `claim`, `beat`, `release`, `set` and `resume` need the index, and exit 1 with "index unavailable" if it is locked for longer than the 10-second timeout. `new` writes its record first, so a failed index update is a warning there.
 
@@ -159,12 +159,18 @@ All times are Unix seconds from `time.time()`. The clock is passed into the API,
 - A missing `jobs.py` means no index and no warning, so a kit without E18, and E16's own tests, behave exactly as before.
 - A `jobs.py` that fails to load, or a call that raises, adds one warning per runner job, `index: <reason>`, and the runner carries on.
 
-| Where in `run.py`                                                 | Call                                        |
-| ----------------------------------------------------------------- | ------------------------------------------- |
-| After `submit`, `send`, `close`, `usage`, `cancel`                | `refresh_runner(common_dir, runner_id)`     |
-| `Daemon._save` (every record write)                               | `refresh_runner(common_dir, runner_id)`     |
-| `Daemon.tick`, at most once a second                              | `daemon_beat(common_dir, self.name, now)`   |
-| `Daemon.tick`, for each job with a command running, once a second | `renew_for_task(common_dir, job.task, now)` |
+| Where in `run.py`                                                 | Call                                  |
+| ----------------------------------------------------------------- | ------------------------------------- |
+| After `submit`, `send`, `close`, `usage`, `cancel`                | `refresh_runner(repo, runner_id)`     |
+| `Daemon._save` (every record write)                               | `refresh_runner(repo, runner_id)`     |
+| `Daemon.tick`, at most once a second                              | `daemon_beat(repo, self.name, now)`   |
+| `Daemon.tick`, for each job with a command running, once a second | `renew_for_task(repo, job.task, now)` |
+
+`repo` is a `jobs.Repo` built from `run.py`'s own `Repo`, which has the same two fields, `main` and `store`. (Changed in T3: the hooks take the repo, not the common dir, because the runner view needs the main worktree to work out a queued job's worktree path.) A CLI command doesn't own the runner job's record, so a CLI hook failure is printed to stderr. A daemon hook failure goes into the record, once per job.
+
+`jobs.py list --cached` answers from the index's rows alone, without re-reading the files, as a dashboard would (added in T3). The tests use it to show that `run.py`'s writes reach the index on their own. `jobs.py daemons [--json]` lists each daemon by id, host and process id, with its last heartbeat, `alive` or `dead`, and its stale runner jobs.
+
+**#87 (T3):** `find_repo`, in both `run.py` and `jobs.py`, takes the main worktree from the common dir's parent when the common dir is a normal `.git` folder, with no `git worktree list` at all. Otherwise, as with a separate git dir, it lists with back-off: 0.1, 0.2, 0.4 and 0.8 seconds. The index's worktree reader retries the same way.
 
 Once a second gives a margin under the spec's "at least every 2 seconds". The calls are cheap: one short transaction each.
 
@@ -208,9 +214,9 @@ lease_state(repo, job_id, *, now=None) -> str          # unclaimed | claimed | c
 sidecar_path(repo, job_id, name) -> Path
 write_sidecar(repo, job_id, name, text, session, *, now=None) -> Path
 # T2-T3, for run.py:
-refresh_runner(common_dir, runner_id) -> None
-daemon_beat(common_dir, daemon_id, now) -> None
-renew_for_task(common_dir, task, now) -> None
+refresh_runner(repo, runner_id) -> None
+daemon_beat(repo, daemon_id, now) -> None
+renew_for_task(repo, task, now) -> None
 ```
 
 The errors are `BadInput` (exit 2), `Refused` (exit 1), `UnknownJob` (a `BadInput`), `IndexTooNew` (a `BadInput`) and `IndexUnavailable` (a `Refused`).

@@ -40,6 +40,7 @@ import ctypes
 import datetime as dt
 import decimal
 import hashlib
+import importlib.util
 import json
 import os
 import re
@@ -225,18 +226,34 @@ class Repo:
         return self.store / "jobs" / job_id
 
 
+LISTING_TRIES = (0.1, 0.2, 0.4, 0.8)  # back-off between tries of `git worktree list` (#87)
+
+
+def main_worktree(cwd: Path, common: Path) -> Path:
+    """The main worktree's root. Usually the common dir's parent, found without listing; else
+    `git worktree list`, retried, because another process's `git worktree add` can make it fail
+    for a moment (#87)."""
+    dot_git = common.parent / ".git"
+    if common.name == ".git" and dot_git.is_dir() and os.path.samefile(dot_git, common):
+        return common.parent
+    for pause in (*LISTING_TRIES, None):
+        listing = _git(cwd, "worktree", "list", "--porcelain")
+        first = next((ln for ln in listing.stdout.splitlines() if ln.startswith("worktree ")), "")
+        if listing.returncode == 0 and first:
+            return Path(first[len("worktree ") :])
+        if pause is not None:
+            time.sleep(pause)
+    raise BadInput("cannot find the repository's main worktree")
+
+
 def find_repo(cwd: Path) -> Repo:
     common = _git(cwd, "rev-parse", "--path-format=absolute", "--git-common-dir")
     if common.returncode != 0:
         raise BadInput(f"{cwd} is not inside a git repository")
     if _git(cwd, "rev-parse", "--verify", "-q", "HEAD^{commit}").returncode != 0:
         raise BadInput("the git repository has no commit yet")
-    listing = _git(cwd, "worktree", "list", "--porcelain")
-    first = next((ln for ln in listing.stdout.splitlines() if ln.startswith("worktree ")), "")
-    if listing.returncode != 0 or not first:
-        raise BadInput("cannot find the repository's main worktree")
-    main = Path(first[len("worktree ") :])
-    return Repo(main=main, store=Path(common.stdout.strip()) / "factory")
+    common_dir = Path(common.stdout.strip())
+    return Repo(main=main_worktree(cwd, common_dir), store=common_dir / "factory")
 
 
 def worktree_path(repo: Repo, config: Config, job_id: str) -> Path:
@@ -309,6 +326,57 @@ def _publish(tmp: Path, final: Path) -> bool:
     except FileExistsError:
         tmp.unlink()
         return False
+
+
+# --- the job index (E18, ADR 0053) ------------------------------------------------------------
+
+JOBS_PY = Path(__file__).resolve().parent.parent / "control" / "jobs.py"
+INDEX_EVERY_S = 1.0  # daemon heartbeats and lease renewals; the spec asks for every 2 seconds
+_INDEX: list[Any] = []
+
+
+def _index_module() -> Any:
+    """`.factory/control/jobs.py` from this install, loaded once: the module, None when it isn't
+    installed (then the runner works as it did in E16), or the exception that stopped it."""
+    if not _INDEX:
+        loaded: Any = None
+        if JOBS_PY.is_file():
+            try:
+                spec = importlib.util.spec_from_file_location("factory_jobs_for_run", JOBS_PY)
+                if spec is None or spec.loader is None:
+                    raise ImportError(f"cannot load {JOBS_PY}")
+                module = importlib.util.module_from_spec(spec)
+                sys.modules[spec.name] = module  # dataclasses look their module up here
+                spec.loader.exec_module(module)
+                loaded = module
+            except Exception as exc:
+                sys.modules.pop("factory_jobs_for_run", None)
+                loaded = exc
+        _INDEX.append(loaded)
+    return _INDEX[0]
+
+
+def index_call(repo: Repo, name: str, *args: Any) -> str | None:
+    """Call one of jobs.py's runner hooks. Returns a warning, `index: <reason>`, if it failed;
+    nothing in a runner job's result depends on the index."""
+    module = _index_module()
+    if module is None:
+        return None
+    if isinstance(module, Exception):
+        return f"index: jobs.py didn't load: {module}"
+    try:
+        getattr(module, name)(module.Repo(main=repo.main, store=repo.store), *args)
+    except Exception as exc:
+        return f"index: {exc}"
+    return None
+
+
+def _index_cli(repo: Repo, job_id: str) -> None:
+    """After a CLI write: refresh the runner job's rows. Only its daemon writes its record, so a
+    failure here is printed, not recorded."""
+    warning = index_call(repo, "refresh_runner", job_id)
+    if warning is not None:
+        print(f"run.py: warning: {warning}", file=sys.stderr)
 
 
 # --- jobs -----------------------------------------------------------------------------------
@@ -735,6 +803,7 @@ class _Job:
     claim: Path
     proc: Proc | None = None
     warned: bool = False  # the cost warning is written once
+    index_warned: bool = False  # so is an index warning
 
 
 class Daemon:
@@ -749,6 +818,8 @@ class Daemon:
         self.name = name or f"{socket.gethostname()}:{os.getpid()}:{secrets.token_hex(3)}"
         self.running: dict[str, _Job] = {}
         self.started = _now()  # a `stop` written after this stops the daemon
+        self.last_index: dt.datetime | None = None  # the last heartbeat and lease renewal
+        self.index_warned: set[str] = set()  # job ids that already carry an index warning
 
     # -- the loop
 
@@ -789,6 +860,27 @@ class Daemon:
                 self.running.pop(job.id, None)
                 job.record.update(status="failed", reason=f"runner error: {exc}", finished=now)
                 self._save(job.id, job.record)
+        self._beat(now)
+
+    def _beat(self, now: dt.datetime) -> None:
+        """At most once a second: the daemon's heartbeat, and the leases of the jobs whose
+        commands are running (E18 AC-13, AC-14)."""
+        due = self.last_index is None or now - self.last_index >= dt.timedelta(
+            seconds=INDEX_EVERY_S
+        )
+        if not due:
+            return
+        self.last_index = now
+        seconds = now.timestamp()
+        warning = index_call(self.repo, "daemon_beat", self.name, seconds)
+        if warning is not None and "" not in self.index_warned:
+            self.index_warned.add("")
+            print(f"run.py: warning: {warning}", file=sys.stderr)
+        for job in list(self.running.values()):
+            if job.proc is not None:
+                warning = index_call(self.repo, "renew_for_task", job.record["task"], seconds)
+                if warning is not None:
+                    self._index_warning(job.id, job.record, warning)
 
     # -- claiming
 
@@ -1101,6 +1193,18 @@ class Daemon:
         folder = self.repo.job(job_id)
         folder.mkdir(parents=True, exist_ok=True)
         _write_atomic(folder / "job.toml", dumps(record))
+        warning = index_call(self.repo, "refresh_runner", job_id)
+        if warning is not None:
+            self._index_warning(job_id, record, warning)
+
+    def _index_warning(self, job_id: str, record: dict[str, Any], warning: str) -> None:
+        """One index warning per job, in its record; the job itself carries on (ADR 0053)."""
+        if job_id in self.index_warned:
+            return
+        self.index_warned.add(job_id)
+        record.setdefault("warnings", []).append(warning)
+        folder = self.repo.job(job_id)
+        _write_atomic(folder / "job.toml", dumps(record))
 
 
 # --- commands ---------------------------------------------------------------------------------
@@ -1154,6 +1258,7 @@ def _submit(args: argparse.Namespace, argv: list[str] | None) -> int:
     tmp = _temp(repo.queue, dumps(request))
     os.rename(tmp, repo.queue / f"{job_id}.toml")
     print(job_id)
+    _index_cli(repo, job_id)
     return 0
 
 
@@ -1174,6 +1279,7 @@ def _send(args: argparse.Namespace, argv: list[str] | None) -> int:
         _temp(folder, dumps({"argv": argv, "sent": _now()})), folder / f"{number:04d}.toml"
     ):
         number += 1
+    _index_cli(repo, args.job)
     return 0
 
 
@@ -1190,6 +1296,7 @@ def _close(args: argparse.Namespace, argv: list[str] | None) -> int:
             f.write(_now().isoformat() + "\n")
     except FileExistsError:
         raise Refused(f"job {args.job} is already closed") from None
+    _index_cli(repo, args.job)
     return 0
 
 
@@ -1223,12 +1330,14 @@ def _cancel(args: argparse.Namespace, argv: list[str] | None) -> int:
             "commands": [],
         }
         _write_atomic(repo.job(args.job) / "job.toml", dumps(record))
+        _index_cli(repo, args.job)
         return 0
     try:
         with open(repo.job(args.job) / "cancel", "x", encoding="utf-8") as f:
             f.write(_now().isoformat() + "\n")
     except FileExistsError:
         pass  # already asked
+    _index_cli(repo, args.job)
     return 0
 
 
@@ -1246,6 +1355,7 @@ def _usage(args: argparse.Namespace, argv: list[str] | None) -> int:
     folder = repo.job(args.job) / "usage"
     tmp = _temp(folder, f"{amount}\n")
     os.rename(tmp, folder / f"{time.time_ns()}-{secrets.token_hex(4)}.usd")
+    _index_cli(repo, args.job)
     return 0
 
 
