@@ -9,7 +9,6 @@ a runner job ended at every wait.
 from __future__ import annotations
 
 import os
-import signal
 import subprocess
 import sys
 from pathlib import Path
@@ -442,7 +441,5 @@ def test_run_drives_the_spec_stage_on_a_real_daemon(
         try:
             daemon.wait(timeout=30)
         except subprocess.TimeoutExpired:
-            if os.name != "nt":
-                daemon.send_signal(signal.SIGKILL)
             daemon.kill()
             daemon.wait(timeout=10)
