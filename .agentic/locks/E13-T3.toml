@@ -1,0 +1,22 @@
+task = "E13-T3"
+locked = 2026-11-22T04:48:58Z
+
+[[files]]
+path = "tests/_pipeline_slices.py"
+sha256 = "9b05fbc86bb8eac0987ddfa44fe1729cb86bf5e1d2d8f938f91401d30be268a5"
+
+[[files]]
+path = "tests/fixtures/pipeline/fake_gate.py"
+sha256 = "2e7a66c9d1ad13eb8552c377aabaaa9a10cc394ae18205ebbc07909b6f8a0632"
+
+[[files]]
+path = "tests/fixtures/pipeline/draft_pr_body.py"
+sha256 = "bd66a976a20c828e21efd5d188c4cbb3f5c5a0cc9c5524e582cc349ed81a43ba"
+
+[[files]]
+path = "tests/test_pipeline_gate_review.py"
+sha256 = "97bcd8939b721a9ef121c466d6ed4297384ac7aa309ecd9f139b1679428c2fed"
+
+[[files]]
+path = "tests/test_pipeline_ship.py"
+sha256 = "f173b21da3ef5acd0ee1042cbb0c67a5d682b4dcd28bed2e55676e08e421ff00"
