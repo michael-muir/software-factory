@@ -6,6 +6,7 @@ import json
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from factory_installer.kit import SEED_FILES
 from factory_installer.pipelines import PIPELINE_PATHS, PROVIDERS, clean_options
 
 MANIFEST_RELPATH = ".factory/manifest.json"
@@ -66,4 +67,6 @@ def load(root: Path) -> Manifest | None:
 
 
 def _is_kit_path(rel: str) -> bool:
+    if rel in SEED_FILES:  # a seed file is the repo's own (ADR 0036)
+        return False
     return (rel.startswith(KIT_PREFIX) and rel != MANIFEST_RELPATH) or rel in PIPELINE_PATHS

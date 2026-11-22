@@ -62,6 +62,7 @@ KIT_FILES = frozenset(
         ".factory/skills/threat-check/SKILL.md",
         ".factory/skills/verify-with-evidence/SKILL.md",
         ".factory/standards/.gitkeep",
+        ".factory/standards/standards.py",
         ".factory/gates/gate.py",
         ".factory/gates/profiles/.gitkeep",
         ".factory/gates/profiles/python.toml",
@@ -97,6 +98,7 @@ STATE_FILES = frozenset(
         ".agentic/locks/.gitkeep",
         "docs/GLOSSARY.md",
         "docs/adr/README.md",
+        ".factory/standards/house/rules.md",
     }
 )
 MANIFEST = ".factory/manifest.json"
