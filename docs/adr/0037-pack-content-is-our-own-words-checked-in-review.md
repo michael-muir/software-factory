@@ -4,7 +4,7 @@ Status: Accepted · Date: 2026-11-21 · Epic: E11
 
 ## Context
 
-The packs draw on guides under different terms. PEP 8 is public domain. The Google guides are CC-BY. Uber Go is Apache-2.0 *(corrected 21 Nov 2026, T2: this said CC-BY 4.0; the guide's LICENSE file is Apache-2.0)*. StyleCop is MIT. Epic's Unreal standard has no open licence. The PO chose rules in our own words, each linking to its source section, with each source and its licence named in the front matter. The PO also chose 15–30 rules per pack that a reviewer must judge, with nothing the formatter or linter already enforces. Neither "our own words" nor "not tool-enforced" can be tested without the source texts and every possible linter configuration.
+The packs draw on guides under different terms. PEP 8 is public domain. The Google guides are CC-BY. Uber Go is Apache-2.0 _(corrected 21 Nov 2026, T2: this said CC-BY 4.0; the guide's LICENSE file is Apache-2.0)_. StyleCop is MIT. Epic's Unreal standard has no open licence. The PO chose rules in our own words, each linking to its source section, with each source and its licence named in the front matter. The PO also chose 15–30 rules per pack that a reviewer must judge, with nothing the formatter or linter already enforces. Neither "our own words" nor "not tool-enforced" can be tested without the source texts and every possible linter configuration.
 
 ## Decision
 
