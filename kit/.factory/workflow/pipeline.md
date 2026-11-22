@@ -2,7 +2,7 @@
 
 A job on the full track goes through nine stages. Each stage is done by the role that owns it, and it passes only when its check, which is code, accepts what the stage committed. People do two things: they approve the spec, and they merge the PR. This page is for the people who run the line. The stage table in `pipeline.py` (`STAGES`) is the source, and a test keeps this page in step with it (ADR 0040).
 
-This version of the kit ships `pipeline.py check`. The driver's commands, `new`, `run`, `approve`, `reject`, `resume`, `cancel` and `status`, are described below and arrive with E13's next slices.
+This version of the kit drives the plan: `pipeline.py check`, `new`, `run` (through the spec and design stages, and the test and build stages of each task), `approve`, `reject`, `resume`, `cancel` and `status`. The gate, review, docs, ship and learn stages arrive with E13-T3. Until then a job that reaches one stops for a human.
 
 ## The stages
 

@@ -280,6 +280,13 @@ Each slice ships on its own:
 ## Changes
 
 - **21 Nov 2026, after acceptance, aligned with E18's accepted design:** the pipeline record is E18's sidecar `work/<job>.pipeline.toml`, not a `work/<job>/` folder. The summary is a second sidecar, `work/<job>.summary.toml`. Request, gate reports and PR bodies live inside the record. Scratch files live in the runner worktree's git dir. The `Jobs` port uses E18's pinned Python API rather than its command line, and the E18 status is `blocked` while awaiting approval or a merge.
+- **21 Nov 2026, while building T2:**
+  - Each `[[sessions]]` entry also records its `attempt` and its full `argv`, so a crash between writing it down and sending it can resend exactly the same command.
+  - `reject` and `resume` raise the record's `attempt`, so a stage reruns all its sessions, and the prompt carries that attempt's note.
+  - `[[runs]]` entries record `closed`.
+  - The spec stage's prompt carries the request text, since a session can't read the job's sidecar outside its worktree.
+  - The driver renews the lease before every write of the record, so a session longer than the lease never loses it.
+  - Until T3, a job that reaches the gate, review, docs, ship or learn stage stops for a human.
 
 ## Risks
 

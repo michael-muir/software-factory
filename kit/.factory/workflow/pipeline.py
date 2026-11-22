@@ -21,6 +21,9 @@ argument, an invalid config, an unknown or damaged job, or not a git repo).
 from __future__ import annotations
 
 import argparse
+import contextlib
+import datetime as dt
+import decimal
 import importlib.util
 import json
 import re
@@ -28,12 +31,13 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import tomllib
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from types import ModuleType
-from typing import Any
+from typing import Any, Protocol
 
 HERE = Path(__file__).resolve().parent
 FACTORY = HERE.parent
@@ -678,6 +682,7 @@ def prompt(
     task: str,
     reads: Sequence[str] = (),
     note: str = "",
+    request: str = "",
 ) -> str:
     """The stage prompt for one role's session: plain text, the same for the same inputs."""
     found = stage(name)
@@ -697,6 +702,8 @@ def prompt(
     lines.append(f"The stage passes when: {found.passes.replace('{epic}', epic)}")
     if note:
         lines.append(f"The last review of this stage said: {note}")
+    if request:
+        lines.append(f"The request:\n{request.strip()}")
     lines.append("Work only in this worktree. Commit your work and stop.")
     return "\n".join(lines)
 
@@ -965,6 +972,885 @@ def _record_facts(record: Mapping[str, Any], task: str) -> dict[str, Any]:
     }
 
 
+# --- errors and the ports to E16 and E18 (ADR 0041) ---------------------------------------------
+
+
+class Refused(Exception):
+    """The command was refused: a live lease held by another session, or the job's state. Exit 1."""
+
+
+class RunnerError(Exception):
+    """E16 refused or failed a command; the job stops for a human."""
+
+
+RUN_PY = FACTORY / "runner" / "run.py"
+JOBS_PY = FACTORY / "control" / "jobs.py"
+
+
+class Runner(Protocol):
+    """E16's command line, one method per command (E16 AC-02 to AC-04, AC-14, AC-16)."""
+
+    def submit(self, job_id: str, base: str, task: str) -> None: ...
+    def send(self, job_id: str, argv: Sequence[str]) -> None: ...
+    def close(self, job_id: str) -> None: ...
+    def status(self, job_id: str) -> dict[str, Any]: ...
+    def usage(self, job_id: str, usd: str) -> None: ...
+    def cancel(self, job_id: str) -> None: ...
+
+
+class CliRunner:
+    """`run.py` beside this kit, run from the repo's main worktree."""
+
+    def __init__(self, root: Path) -> None:
+        self.root = root
+
+    def _run(self, *args: str) -> str:
+        argv = [sys.executable, str(RUN_PY), *args]
+        try:
+            done = subprocess.run(
+                argv, cwd=self.root, capture_output=True, text=True, encoding="utf-8", check=False
+            )
+        except OSError as exc:
+            raise RunnerError(f"cannot run run.py: {exc}") from None
+        if done.returncode != 0:
+            message = done.stderr.strip() or done.stdout.strip()
+            raise RunnerError(f"run.py {args[0]} exited {done.returncode}: {message}")
+        return done.stdout
+
+    def submit(self, job_id: str, base: str, task: str) -> None:
+        self._run("submit", "--id", job_id, "--base", base, "--task", task, "--open")
+
+    def send(self, job_id: str, argv: Sequence[str]) -> None:
+        self._run("send", job_id, "--", *argv)
+
+    def close(self, job_id: str) -> None:
+        self._run("close", job_id)
+
+    def status(self, job_id: str) -> dict[str, Any]:
+        data = json.loads(self._run("status", job_id, "--json"))
+        return dict(data)
+
+    def usage(self, job_id: str, usd: str) -> None:
+        self._run("usage", job_id, "--usd", usd)
+
+    def cancel(self, job_id: str) -> None:
+        self._run("cancel", job_id)
+
+
+def runner_for(root: Path) -> Runner:
+    """The runner the driver talks to; tests replace this."""
+    return CliRunner(root)
+
+
+def _jobs() -> Any:
+    """E18's jobs.py, by path: its API is a contract E18's tests pin."""
+    return _load(JOBS_PY, "factory_pipeline_jobs")
+
+
+def _session_id(given: str | None) -> str:
+    import os
+    import socket
+
+    session = given or os.environ.get("FACTORY_SESSION", "")
+    if session:
+        return session
+    host = re.sub(r"[^A-Za-z0-9.-]", "-", socket.gethostname())[:30] or "host"
+    return f"pipeline-{host}-{os.getpid()}"
+
+
+def _now() -> str:
+    return dt.datetime.now(dt.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+# --- the job, held under E18's lease -------------------------------------------------------------
+
+
+class Job:
+    """One pipeline job: E18's record and lease, and the pipeline sidecar beside it."""
+
+    def __init__(self, root: Path, job_id: str, session: str) -> None:
+        self.jobs = _jobs()
+        try:
+            self.repo = self.jobs.find_repo(root)
+            self.jobs_config = self.jobs.load_config(self.repo)
+        except self.jobs.BadInput as exc:
+            raise BadInput(str(exc)) from None
+        self.root = Path(self.repo.main)
+        self.id = job_id
+        self.session = session
+        self.record = read_record(self.root, job_id)
+        self.held = False
+        self.last_beat = 0.0
+
+    def claim(self) -> None:
+        try:
+            self.jobs.claim(self.repo, self.jobs_config, self.id, self.session)
+        except self.jobs.Refused as exc:
+            raise Refused(str(exc)) from None
+        except self.jobs.BadInput as exc:
+            raise BadInput(str(exc)) from None
+        self.held = True
+        self.last_beat = time.monotonic()
+        self.record = read_record(self.root, self.id)  # what the last holder left
+
+    def beat(self) -> None:
+        self.jobs.beat(self.repo, self.jobs_config, self.id, self.session)
+        self.last_beat = time.monotonic()
+
+    def beat_if_due(self) -> None:
+        if time.monotonic() - self.last_beat >= self.jobs_config.lease_minutes * 60 / 3:
+            self.beat()
+
+    def release(self) -> None:
+        if self.held:
+            self.held = False
+            with contextlib.suppress(self.jobs.Refused):
+                self.jobs.release(self.repo, self.id, self.session)
+
+    def save(self) -> None:
+        """Write the record, renewing the lease first so a long session never loses it."""
+        self.beat()
+        text = dump_record(self.record)
+        self.jobs.write_sidecar(self.repo, self.id, "pipeline", text, self.session)
+
+    def set_e18(self, **fields: str) -> None:
+        current = self.jobs.read_job(self.repo, self.id)
+        changed = {k: v for k, v in fields.items() if current.get(k) != v}
+        if changed:
+            self.beat()
+            self.jobs.set_job(self.repo, self.id, self.session, **changed)
+
+    def __enter__(self) -> Job:
+        self.claim()
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        self.release()
+
+
+E18_STATUS = {
+    "needs-human": "blocked",
+    "awaiting-approval": "blocked",
+    "awaiting-merge": "blocked",
+    "done": "done",
+    "cancelled": "cancelled",
+}
+
+
+# --- the driver (ADR 0041) ----------------------------------------------------------------------
+
+STOP_OK, STOP_HUMAN, GO = 0, 1, -1
+LATER_STAGES = ("gate", "review", "docs", "ship", "learn")  # driven from E13-T3
+
+
+class Driver:
+    """Takes a job from where it stands to its next wait point, one recorded action per step."""
+
+    def __init__(self, job: Job, runner: Runner, *, poll: float = 1.0) -> None:
+        self.job = job
+        self.runner = runner
+        self.poll = poll
+        self.config = load_config(job.root)
+        self.pipeline = pipeline_config(self.config)
+
+    @property
+    def rec(self) -> dict[str, Any]:
+        return self.job.record
+
+    # -- the loop
+
+    def run(self) -> int:
+        status = self.rec["status"]
+        if status in ("done", "cancelled"):
+            raise Refused(f"job {self.job.id} is {status}")
+        if status == "needs-human":
+            raise Refused(f"job {self.job.id} needs a human: {self.rec['reason']}")
+        if status in ("awaiting-approval", "awaiting-merge"):
+            print(f"{self.job.id}: {status} at the {self.rec['stage']} stage")
+            return STOP_OK
+        self.rec["status"] = "running"
+        self.job.save()
+        self._sync_e18()
+        while True:
+            code = self.step()
+            if code != GO:
+                return code
+            self.job.beat_if_due()
+
+    def step(self) -> int:
+        current = stage(self.rec["stage"])
+        if current.name in LATER_STAGES:
+            return self._stop(f"the {current.name} stage is driven from E13-T3, not yet built")
+        task = self._task()
+        outstanding = self._outstanding()
+        if outstanding is not None:
+            return self._collect(outstanding)
+        done = {s["role"] for s in self._sessions(current.name, task) if s.get("exit_code") == 0}
+        pending = [role for role in current.roles if role not in done]
+        if pending:
+            return self._send(current, task, pending[0])
+        return self._judge(current, task)
+
+    # -- the parts of a step
+
+    def _task(self) -> str:
+        key = "id" if stage(self.rec["stage"]).scope == "plan" else "task"
+        return str(self.rec[key])
+
+    def _attempt(self) -> int:
+        return int(self.rec.get("attempt", 1))
+
+    def _sessions(self, name: str, task: str) -> list[dict[str, Any]]:
+        return [
+            s
+            for s in self.rec["sessions"]
+            if s.get("stage") == name
+            and s.get("task") == task
+            and s.get("attempt", 1) == self._attempt()
+        ]
+
+    def _outstanding(self) -> dict[str, Any] | None:
+        sessions = self.rec["sessions"]
+        if sessions and "exit_code" not in sessions[-1]:
+            return dict(sessions[-1])
+        return None
+
+    def _open_run(self, task: str) -> dict[str, Any] | None:
+        runs = [r for r in self.rec["runs"] if r.get("task") == task]
+        return runs[-1] if runs and not runs[-1].get("closed") else None
+
+    def _new_run(self, current: Stage, task: str) -> dict[str, Any]:
+        same = [r for r in self.rec["runs"] if r.get("task") == task]
+        plan = [r for r in self.rec["runs"] if r.get("task") == self.rec["id"]]
+        if same:
+            base = f"factory/{same[-1]['id']}"
+        elif current.scope == "slice" and plan and self._task_number(task) == 1:
+            base = f"factory/{plan[-1]['id']}"
+        else:
+            base = self._origin_base()
+        if current.scope == "plan":
+            run_id = f"{self.job.id}-p{len(same) + 1}"
+        else:
+            run_id = f"{self.job.id}-t{self._task_number(task)}-{len(same) + 1}"
+        try:
+            self.runner.submit(run_id, base, task)
+            status = self.runner.status(run_id)
+        except RunnerError as exc:
+            raise _Stop(str(exc)) from None
+        run = {
+            "id": run_id,
+            "task": task,
+            "base": base,
+            "stages": [current.name],
+            "branch": str(status.get("branch", f"factory/{run_id}")),
+            "worktree": str(status.get("worktree", "")),
+            "closed": False,
+        }
+        self.rec["runs"].append(run)
+        self.job.save()
+        self._sync_e18()
+        return run
+
+    def _task_number(self, task: str) -> int:
+        match = re.search(r"-T(\d+)$", task)
+        return int(match.group(1)) if match else 0
+
+    def _origin_base(self) -> str:
+        ref = str(self.config.get("gates", {}).get("base_ref", self.rec["base"]) or "main")
+        try:
+            _resolve(self.job.root, f"origin/{ref}")
+            return f"origin/{ref}"
+        except BadInput:
+            return ref
+
+    def _reads(self, current: Stage, task: str, worktree: Path) -> list[str]:
+        found = [
+            str(p.relative_to(worktree).as_posix())
+            for p in sorted((worktree / "docs" / "specs").glob(f"{self.rec['epic']}-*.md"))
+        ]
+        design = sorted((worktree / "docs" / "design").glob(f"{self.rec['epic']}-*.md"))
+        if current.name == "spec":
+            return [".factory/workflow/templates/spec.md"]
+        if current.name == "design":
+            return [*found, ".factory/workflow/templates/design.md"]
+        found += [str(p.relative_to(worktree).as_posix()) for p in design]
+        return [*found, f".agentic/tasks/{task}.md"]
+
+    def _note(self, name: str, task: str) -> str:
+        for decision in reversed(self.rec["decisions"]):
+            if (
+                decision.get("checkpoint") == name
+                and decision.get("task", task) == task
+                and decision.get("attempt") == self._attempt()
+                and decision.get("verdict") in ("reject", "resume")
+            ):
+                return str(decision.get("note", ""))
+        return ""
+
+    def _send(self, current: Stage, task: str, role: str) -> int:
+        try:
+            run = self._open_run(task) or self._new_run(current, task)
+        except _Stop as stop:
+            return self._stop(str(stop))
+        if current.name not in run["stages"]:
+            run["stages"].append(current.name)
+        worktree = Path(run["worktree"])
+        text = prompt(
+            current.name,
+            role,
+            job=self.job.id,
+            epic=self.rec["epic"],
+            task=task,
+            reads=self._reads(current, task, worktree),
+            note=self._note(current.name, task),
+            request=self.rec["request"] if current.name == "spec" else "",
+        )
+        allowed = role_allowed_tools(self.job.root, role)
+        argv = session_argv(self.pipeline["agent_command"], role, allowed, text)
+        env = [f"{k}={v}" for k, v in session_env(role).items()]
+        wrapped = [sys.executable, str(Path(__file__).resolve()), "_env", *env, "--", *argv]
+        try:
+            index = len(self.runner.status(run["id"]).get("commands", [])) + 1
+        except RunnerError as exc:
+            return self._stop(str(exc))
+        self.rec["sessions"].append(
+            {
+                "run": run["id"],
+                "index": index,
+                "stage": current.name,
+                "task": task,
+                "role": role,
+                "attempt": self._attempt(),
+                "sent": _now(),
+                "argv": wrapped,
+            }
+        )
+        self.job.save()  # written down before it's sent
+        return self._dispatch(self.rec["sessions"][-1])
+
+    def _dispatch(self, session: dict[str, Any]) -> int:
+        try:
+            self.runner.send(session["run"], session["argv"])
+        except RunnerError as exc:
+            self.rec["sessions"][-1]["exit_code"] = -1
+            self.rec["sessions"][-1]["finished"] = _now()
+            return self._stop(
+                f"{session['stage']}: the runner refused the {session['role']} session: {exc}"
+            )
+        return GO
+
+    def _collect(self, session: dict[str, Any]) -> int:
+        try:
+            status = self.runner.status(session["run"])
+        except RunnerError as exc:
+            return self._stop(str(exc))
+        commands = status.get("commands", [])
+        if len(commands) < session["index"]:
+            return self._dispatch(session)  # recorded, never sent: a crash in between
+        ran = commands[session["index"] - 1]
+        if ran.get("exit_code") is None:
+            if status.get("status") in ("halted", "failed"):
+                self._finish(session, -1)
+                return self._stop(_halted(session, status))
+            time.sleep(self.poll)
+            return GO
+        code = int(ran["exit_code"])
+        self._finish(session, code, Path(str(ran.get("log", ""))))
+        if status.get("status") in ("halted", "failed"):
+            return self._stop(_halted(session, status))
+        if code != 0:
+            return self._stop(f"{session['stage']}: the {session['role']} session exited {code}")
+        return GO
+
+    def _finish(self, session: dict[str, Any], code: int, log: Path | None = None) -> None:
+        entry = self.rec["sessions"][-1]
+        entry["exit_code"] = code
+        entry["finished"] = _now()
+        usd = _cost(log) if log is not None else None
+        if usd is None:
+            if log is not None:
+                where = f"{session['run']}#{session['index']}"
+                self.rec["warnings"].append(
+                    f"no cost reported by the {session['role']} session {where}"
+                )
+        else:
+            try:
+                self.runner.usage(session["run"], usd)
+            except RunnerError as exc:
+                self.rec["warnings"].append(f"cost {usd} not reported to the runner: {exc}")
+            entry["usd"] = usd
+        self.job.save()
+
+    def _judge(self, current: Stage, task: str) -> int:
+        run = self._open_run(task)
+        if run is None:
+            return self._stop(f"{current.name}: no runner job is open for {task}")
+        root = Path(run["worktree"])
+        facts = _record_facts(self.rec, task)
+        runs = [r for r in self.rec["runs"] if r.get("task") == task]
+        base = _resolve(root, runs[0]["base"])
+        checkout = Checkout(root=root, epic=self.rec["epic"], task=task, base=base, **facts)
+        problems = check(current.name, checkout)
+        if problems:
+            return self._stop("; ".join(str(p) for p in problems))
+        if current.name == "design":
+            self._take_tasks(checkout)
+        if current.checkpoint and current.checkpoint in self.pipeline["checkpoints"]:
+            self._close(run)
+            self.rec["status"] = (
+                "awaiting-merge" if current.checkpoint == "merge" else "awaiting-approval"
+            )
+            self.job.save()
+            self._sync_e18()
+            print(f"{self.job.id}: {self.rec['status']} at the {current.name} stage")
+            return STOP_OK
+        self._advance()
+        return GO
+
+    def _take_tasks(self, checkout: Checkout) -> None:
+        name = re.compile(rf"\.agentic/tasks/{re.escape(self.rec['epic'])}-T(\d+)\.md")
+        found = sorted(
+            (int(m.group(1)), Path(rel).stem)
+            for rel in checkout.tracked(".agentic/tasks")
+            if (m := name.fullmatch(rel))
+        )
+        known = {t.get("id") for t in self.rec["tasks"]}
+        for _, task in found:
+            if task not in known:
+                self.rec["tasks"].append({"id": task, "branch": "", "pr": "", "merged": False})
+        self.job.save()
+
+    def _advance(self) -> None:
+        """Move to the next stage (spec AC-05: the only way forward)."""
+        old = stage(self.rec["stage"])
+        index = STAGE_NAMES.index(old.name)
+        nxt = STAGES[index + 1]
+        if old.scope == "plan" and nxt.scope == "slice":
+            run = self._open_run(self.rec["id"])
+            if run is not None:
+                self._close(run)
+            if not self.rec["tasks"]:
+                raise _Stop("design: the design made no tasks")
+            self.rec["task"] = self.rec["tasks"][0]["id"]
+        self.rec["stage"] = nxt.name
+        self.rec["attempt"] = 1
+        self.job.save()
+        self._sync_e18()
+
+    def _close(self, run: dict[str, Any]) -> None:
+        if run.get("closed"):
+            return
+        run["closed"] = True
+        try:
+            self.runner.close(run["id"])
+        except RunnerError as exc:
+            self.rec["warnings"].append(f"closing runner job {run['id']}: {exc}")
+        self.job.save()
+
+    def _stop(self, reason: str) -> int:
+        """Stop for a human: record why, end the open runner job, and mark the E18 job blocked."""
+        run = self._open_run(self._task())
+        if run is not None:
+            self._close(run)
+        self.rec["status"] = "needs-human"
+        self.rec["reason"] = reason
+        self.job.save()
+        self._sync_e18()
+        print(f"{self.job.id}: needs a human: {reason}", file=sys.stderr)
+        return STOP_HUMAN
+
+    def _sync_e18(self) -> None:
+        fields = {
+            "phase": self.rec["stage"],
+            "status": E18_STATUS.get(self.rec["status"], "open"),
+        }
+        if self.rec["task"] != self.rec["id"] or stage(self.rec["stage"]).scope == "plan":
+            fields["task"] = self.rec["task"]
+        run = next((r for r in reversed(self.rec["runs"]) if r.get("task") == self._task()), None)
+        if run is not None:
+            fields["branch"] = str(run["branch"])
+            fields["worktree"] = str(run["worktree"])
+        self.job.set_e18(**fields)
+
+
+class _Stop(Exception):
+    pass
+
+
+def _halted(session: Mapping[str, Any], status: Mapping[str, Any]) -> str:
+    state = status.get("status")
+    reason = status.get("reason") or state
+    return f"{session['stage']}: runner job {session['run']} {state}: {reason}"
+
+
+def _cost(log: Path) -> str | None:
+    """`total_cost_usd` from a session's JSON output, as a decimal string; None without one."""
+    try:
+        text = log.read_text(encoding="utf-8", errors="replace").strip()
+    except OSError:
+        return None
+    candidates = [text, *reversed(text.splitlines())]
+    for candidate in candidates:
+        try:
+            data = json.loads(candidate)
+        except json.JSONDecodeError:
+            continue
+        value = data.get("total_cost_usd") if isinstance(data, dict) else None
+        if isinstance(value, int | float) and not isinstance(value, bool) and value >= 0:
+            return str(decimal.Decimal(str(value)).normalize())
+    return None
+
+
+# --- approvals and rejections (ADR 0044) ---------------------------------------------------------
+
+
+def commit_file(
+    root: Path, branch: str, rel: str, text: str, message: str, *, old: str | None = None
+) -> str:
+    """Commit one file's new text on `branch` without a checkout; refused if the branch moved."""
+    import os
+
+    ref = f"refs/heads/{branch}"
+    current = _git(root, "rev-parse", "--verify", ref).strip()
+    parent = old or current
+    if parent != current:
+        raise Refused(f"{branch} moved from {parent[:SHORT]} to {current[:SHORT]}")
+    with tempfile.TemporaryDirectory(prefix="factory-commit-") as temp:
+        env = {**os.environ, "GIT_INDEX_FILE": str(Path(temp) / "index")}
+
+        def run(*args: str, stdin: str | None = None) -> str:
+            done = subprocess.run(
+                ["git", *args],
+                cwd=root,
+                env=env,
+                input=stdin,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                check=False,
+            )
+            if done.returncode != 0:
+                raise GitError(done.stderr.strip() or f"git {args[0]} failed")
+            return done.stdout.strip()
+
+        blob = run("hash-object", "-w", "--stdin", stdin=text)
+        run("read-tree", parent)
+        run("update-index", "--add", "--cacheinfo", f"100644,{blob},{rel}")
+        tree = run("write-tree")
+        commit = run("commit-tree", tree, "-p", parent, "-m", message)
+        try:
+            run("update-ref", ref, commit, parent)
+        except GitError as exc:
+            raise Refused(f"{branch} moved: {exc}") from None
+    return commit
+
+
+BOLD_STATUS = re.compile(r"^(Status: )\*\*[^*]+\*\*", re.MULTILINE)
+
+
+def _date() -> str:
+    now = dt.datetime.now(dt.UTC)
+    return f"{now.day} {now:%b %Y}"
+
+
+def _approve(job: Job, checkpoint: str, by: str) -> None:
+    rec = job.record
+    epic = rec["epic"]
+    plan = [r for r in rec["runs"] if r.get("task") == rec["id"]]
+    if not plan:
+        raise Refused("the job has no plan branch")
+    branch = str(plan[-1]["branch"])
+    folder, kind, word = (
+        ("docs/specs", "spec", "Approved")
+        if checkpoint == "spec"
+        else ("docs/design", "design", "Accepted")
+    )
+    listing = _lines(_git(job.root, "ls-tree", "-r", "--name-only", branch, "--", folder))
+    docs = [rel for rel in listing if re.fullmatch(rf"{folder}/{re.escape(epic)}-[^/]+\.md", rel)]
+    if len(docs) != 1:
+        raise Refused(f"{branch} has {len(docs)} {kind} documents for {epic}")
+    rel = docs[0]
+    text = _git(job.root, "show", f"{branch}:{rel}")
+    new, count = BOLD_STATUS.subn(rf"\1**{word} by {by}, {_date()}**", text, count=1)
+    if not count:
+        raise Refused(f"{rel} has no bold status to change")
+    problems = _docs().lint(kind, rel, new)
+    if problems:
+        raise Refused(f"{rel}: the new status line fails docs.py: {problems[0]}")
+    verb = "approved" if checkpoint == "spec" else "accepted"
+    commit_file(job.root, branch, rel, new, f"docs({epic}): {kind} {verb} by {by}")
+
+
+def _decide(args: argparse.Namespace, verdict: str) -> int:
+    if args.checkpoint not in CHECKPOINTS:
+        raise BadInput(f"unknown checkpoint {args.checkpoint!r}; one of {', '.join(CHECKPOINTS)}")
+    here = _toplevel(Path.cwd())
+    with Job(here, args.job, _session_id(args.session)) as job:
+        rec = job.record
+        waiting = stage(rec["stage"]).checkpoint
+        if args.checkpoint == "merge" and verdict == "approve":
+            raise Refused("a merge is approved by merging the PR, not by a command")
+        if rec["status"] != "awaiting-approval" or waiting != args.checkpoint:
+            raise Refused(f"job {args.job} isn't waiting at the {args.checkpoint} checkpoint")
+        task = rec["id"] if stage(rec["stage"]).scope == "plan" else rec["task"]
+        attempt = int(rec.get("attempt", 1))
+        if verdict == "approve":
+            _approve(job, args.checkpoint, args.by)
+            decision_attempt = attempt
+        else:
+            decision_attempt = attempt + 1
+            rec["attempt"] = decision_attempt
+        rec["decisions"].append(
+            {
+                "checkpoint": args.checkpoint,
+                "verdict": verdict,
+                "by": args.by,
+                "at": _now(),
+                "note": args.note or "",
+                "task": task,
+                "attempt": decision_attempt,
+            }
+        )
+        rec["status"] = "ready"
+        driver = Driver(job, runner_for(job.root))
+        if verdict == "approve":
+            driver._advance()
+        else:
+            job.save()
+            driver._sync_e18()
+    print(f"{args.job}: {verdict}d at the {args.checkpoint} checkpoint")
+    return 0
+
+
+# --- new, status, run, resume and cancel ---------------------------------------------------------
+
+
+def _title_of(text: str) -> str:
+    for line in text.splitlines():
+        line = line.strip().lstrip("#").strip()
+        if line:
+            return line[:200]
+    return "Untitled request"
+
+
+def _github_repo(root: Path) -> str:
+    url = _git(root, "remote", "get-url", "origin").strip()
+    match = re.search(r"github\.com[:/]([^/]+)/([^/]+?)(?:\.git)?/?$", url)
+    if not match:
+        raise BadInput(f"origin ({url}) is not a GitHub repository")
+    return f"{match.group(1)}/{match.group(2)}"
+
+
+def _issue(root: Path, number: int) -> tuple[str, str]:
+    gh = shutil.which("gh")
+    if gh is None:
+        raise BadInput("--issue needs the gh command")
+    path = f"repos/{_github_repo(root)}/issues/{number}"
+    done = subprocess.run([gh, "api", path], cwd=root, capture_output=True, text=True, check=False)
+    if done.returncode != 0:
+        raise BadInput(f"gh api {path}: {done.stderr.strip()}")
+    try:
+        data = json.loads(done.stdout)
+    except json.JSONDecodeError:
+        raise BadInput(f"gh api {path} gave no JSON") from None
+    return str(data.get("title", "")), str(data.get("body") or "")
+
+
+def _new(args: argparse.Namespace) -> int:
+    if not JOB_ID.fullmatch(args.job):
+        raise BadInput(f"{args.job!r} is not a job id ([a-z0-9][a-z0-9-]{{0,29}})")
+    if not EPIC_ID.fullmatch(args.epic):
+        raise BadInput(f"--epic must name the epic, like E13 (got {args.epic!r})")
+    if (args.request_file is None) == (args.issue is None):
+        raise BadInput("give the request with --request-file FILE or --issue N, not both")
+    here = _toplevel(Path.cwd())
+    main_root = _main_worktree(here)
+    config = load_config(here)
+    settings = pipeline_config(config)
+    if list((main_root / "docs" / "specs").glob(f"{args.epic}-*.md")):
+        raise BadInput(f"{args.epic} already has a spec in docs/specs")
+    if args.issue is not None:
+        if settings["forge"] != "github":
+            raise BadInput('--issue reads GitHub issues: it needs pipeline.forge = "github"')
+        title, body = _issue(here, args.issue)
+        request = f"{title}\n\n{body}\n"
+    else:
+        request = _read_text(Path(args.request_file))
+        title = _title_of(request)
+    title = args.title or title
+    jobs = _jobs()
+    try:
+        repo = jobs.find_repo(here)
+        if sidecar_path(here, args.job, "pipeline").exists():
+            raise BadInput(f"job {args.job} already has a pipeline record")
+        try:
+            existing = jobs.read_job(repo, args.job)
+        except jobs.UnknownJob:
+            existing = None
+        if existing is None:
+            jobs.new_job(repo, title, job_id=args.job, track="full", task=args.job)
+        elif existing["track"] != "full" or existing["status"] != "open":
+            raise BadInput(f"job {args.job} is used ({existing['track']}, {existing['status']})")
+    except jobs.BadInput as exc:
+        raise BadInput(str(exc)) from None
+    except jobs.Refused as exc:
+        raise Refused(str(exc)) from None
+    base = str(config.get("gates", {}).get("base_ref", "main"))
+    record: dict[str, Any] = {
+        "version": 1,
+        "id": args.job,
+        "epic": args.epic,
+        "issue": args.issue or 0,
+        "status": "ready",
+        "reason": "",
+        "stage": "spec",
+        "task": args.job,
+        "base": base,
+        "request": request,
+        "warnings": [],
+        "tasks": [],
+        "runs": [],
+        "sessions": [],
+        "gates": [],
+        "decisions": [],
+    }
+    session = _session_id(getattr(args, "session", None))
+    jobs.claim(repo, jobs.load_config(repo), args.job, session)
+    try:
+        jobs.write_sidecar(repo, args.job, "pipeline", dump_record(record), session)
+    finally:
+        jobs.release(repo, args.job, session)
+    print(args.job)
+    return 0
+
+
+def _stages(rec: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """Each stage that ran, per task and attempt: its times, its commands and its cost."""
+    out: list[dict[str, Any]] = []
+    for session in rec["sessions"]:
+        key = (session.get("stage"), session.get("task"), session.get("attempt", 1))
+        if not out or (out[-1]["stage"], out[-1]["task"], out[-1]["attempt"]) != key:
+            out.append(
+                {
+                    "stage": key[0],
+                    "task": key[1],
+                    "attempt": key[2],
+                    "started": session.get("sent", ""),
+                    "finished": "",
+                    "commands": [],
+                    "usd": "0",
+                }
+            )
+        entry = out[-1]
+        entry["commands"].append(f"{session.get('run')}#{session.get('index')}")
+        entry["finished"] = session.get("finished", "")
+        total = decimal.Decimal(entry["usd"]) + decimal.Decimal(str(session.get("usd", "0")))
+        entry["usd"] = str(total.normalize()) if total else "0"
+    return out
+
+
+def _status(args: argparse.Namespace) -> int:
+    here = _toplevel(Path.cwd())
+    record = read_record(here, args.job)
+    jobs = _jobs()
+    try:
+        job = jobs.read_job(jobs.find_repo(here), args.job)
+    except jobs.BadInput as exc:
+        raise BadInput(str(exc)) from None
+    data = {
+        "job": json.loads(json.dumps(job, default=str)),
+        "pipeline": record,
+        "stages": _stages(record),
+    }
+    if args.json:
+        print(json.dumps(data, indent=2))
+        return 0
+    print(f"{args.job}: {record['status']} at the {record['stage']} stage, task {record['task']}")
+    if record["reason"]:
+        print(f"  reason: {record['reason']}")
+    print(f"  epic {record['epic']}, E18 job {job['status']}, phase {job['phase']}")
+    for entry in data["stages"]:
+        count = len(entry["commands"])
+        print(f"  {entry['stage']} ({entry['task']}): {count} sessions, ${entry['usd']}")
+    for decision in record["decisions"]:
+        who = f"{decision['verdict']} by {decision['by']} at {decision['at']}"
+        print(f"  {decision['checkpoint']} {who}")
+    return 0
+
+
+def _run(args: argparse.Namespace) -> int:
+    here = _toplevel(Path.cwd())
+    with Job(here, args.job, _session_id(args.session)) as job:
+        return Driver(job, runner_for(job.root)).run()
+
+
+def _resume(args: argparse.Namespace) -> int:
+    here = _toplevel(Path.cwd())
+    with Job(here, args.job, _session_id(args.session)) as job:
+        rec = job.record
+        if rec["status"] != "needs-human":
+            raise Refused(f"job {args.job} is {rec['status']}, not waiting for a human")
+        attempt = int(rec.get("attempt", 1)) + 1
+        rec["attempt"] = attempt
+        task = rec["id"] if stage(rec["stage"]).scope == "plan" else rec["task"]
+        rec["decisions"].append(
+            {
+                "checkpoint": rec["stage"],
+                "verdict": "resume",
+                "by": job.session,
+                "at": _now(),
+                "note": args.note or "",
+                "task": task,
+                "attempt": attempt,
+            }
+        )
+        if rec["sessions"] and "exit_code" not in rec["sessions"][-1]:
+            rec["sessions"][-1]["exit_code"] = -1
+        rec["status"], rec["reason"] = "ready", ""
+        job.save()
+        Driver(job, runner_for(job.root))._sync_e18()
+    print(f"{args.job}: ready to rerun the {rec['stage']} stage")
+    return 0
+
+
+def _cancel(args: argparse.Namespace) -> int:
+    here = _toplevel(Path.cwd())
+    with Job(here, args.job, _session_id(args.session)) as job:
+        rec = job.record
+        if rec["status"] in ("done", "cancelled"):
+            raise Refused(f"job {args.job} is {rec['status']}")
+        runner = runner_for(job.root)
+        for run in rec["runs"]:
+            if not run.get("closed"):
+                try:
+                    runner.cancel(run["id"])
+                except RunnerError as exc:
+                    rec["warnings"].append(f"cancelling runner job {run['id']}: {exc}")
+                run["closed"] = True
+        rec["status"], rec["reason"] = "cancelled", "cancelled"
+        job.save()
+        Driver(job, runner)._sync_e18()
+    print(f"{args.job}: cancelled")
+    return 0
+
+
+def _env(argv: Sequence[str]) -> int:
+    """`_env KEY=VALUE ... -- argv`: run argv with the variables added (E16 passes none)."""
+    import os
+
+    if "--" not in argv:
+        raise BadInput("_env needs -- before the command")
+    split = list(argv).index("--")
+    pairs, command = list(argv)[:split], list(argv)[split + 1 :]
+    env = dict(os.environ)
+    for pair in pairs:
+        key, _, value = pair.partition("=")
+        env[key] = value
+    if not command:
+        raise BadInput("_env needs a command")
+    return subprocess.run(command, env=env, check=False).returncode
+
+
 # --- the command line ---------------------------------------------------------------------------
 
 
@@ -1098,17 +1984,67 @@ def _parser() -> argparse.ArgumentParser:
     chk.add_argument("--pr-body", metavar="FILE", help="the PR body (ship)")
     chk.add_argument("--job", help="read the rest from this job's record (with --worktree)")
     chk.set_defaults(func=_check_command)
+
+    new = commands.add_parser("new", help="create a job and its pipeline record")
+    new.add_argument("job")
+    new.add_argument("--epic", required=True, help="the epic the job's spec will have, like E31")
+    new.add_argument("--request-file", metavar="FILE", help="the request, as text")
+    new.add_argument("--issue", type=int, help="read the request from this GitHub issue")
+    new.add_argument("--title", help="the job's title (default: the request's first line)")
+    new.set_defaults(func=_new)
+
+    run = commands.add_parser("run", help="drive the job to its next wait point")
+    run.add_argument("job")
+    run.add_argument("--session", help="the session id (default: $FACTORY_SESSION, or made up)")
+    run.set_defaults(func=_run)
+
+    for verdict in ("approve", "reject"):
+        sub = commands.add_parser(verdict, help=f"{verdict} the checkpoint the job waits at")
+        sub.add_argument("job")
+        sub.add_argument("checkpoint", help="spec, design or merge")
+        sub.add_argument("--by", required=True, help="who decides")
+        sub.add_argument("--note", required=verdict == "reject", help="for the role's next try")
+        sub.add_argument("--session", help="the session id")
+        sub.set_defaults(func=lambda a, v=verdict: _decide(a, v))
+
+    res = commands.add_parser("resume", help="rerun a stage that stopped for a human")
+    res.add_argument("job")
+    res.add_argument("--note", help="for the role's next try")
+    res.add_argument("--session", help="the session id")
+    res.set_defaults(func=_resume)
+
+    can = commands.add_parser("cancel", help="cancel the job and its open runner job")
+    can.add_argument("job")
+    can.add_argument("--session", help="the session id")
+    can.set_defaults(func=_cancel)
+
+    sta = commands.add_parser("status", help="print the job and its pipeline record")
+    sta.add_argument("job")
+    sta.add_argument("--json", action="store_true")
+    sta.set_defaults(func=_status)
     return parser
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    argv = sys.argv[1:] if argv is None else list(argv)
     try:
+        if argv[:1] == ["_env"]:
+            return _env(argv[1:])
         args = _parser().parse_args(argv)
     except SystemExit as exc:
         return exc.code if isinstance(exc.code, int) else 2
+    except BadInput as exc:
+        print(f"pipeline.py: {exc}", file=sys.stderr)
+        return 2
     try:
         code: int = args.func(args)
     except BadInput as exc:
+        print(f"pipeline.py: {exc}", file=sys.stderr)
+        return 2
+    except Refused as exc:
+        print(f"pipeline.py: refused: {exc}", file=sys.stderr)
+        return 1
+    except GitError as exc:
         print(f"pipeline.py: {exc}", file=sys.stderr)
         return 2
     return code

@@ -1,0 +1,22 @@
+task = "E13-T2"
+locked = 2026-11-22T03:47:35Z
+
+[[files]]
+path = "tests/_pipeline_driver.py"
+sha256 = "9fd479788b41a91c65297cd827c0a4c2782f38f84552e792ec9e8b8b1994c891"
+
+[[files]]
+path = "tests/fixtures/pipeline/fake_agent.py"
+sha256 = "ac3e6be3583378c407d6b40f329f267b71edef6b5910add36629d97379e7e8ee"
+
+[[files]]
+path = "tests/test_pipeline_new_status.py"
+sha256 = "96fd6846e89a7d08743b931d4c0d9a733f0d87c3da49cd997df8ad21bac726a4"
+
+[[files]]
+path = "tests/test_pipeline_run.py"
+sha256 = "308b28e843065d777e604fddcdbeed5deef255d60bd8b5c89c20486071a4ad32"
+
+[[files]]
+path = "tests/test_pipeline_checkpoints.py"
+sha256 = "bc1c60b94d452201f303953522a3dfe77aa35071f297b564e1ce85f8b2c73559"
