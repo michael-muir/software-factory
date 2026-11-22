@@ -663,6 +663,15 @@ def doc_problems(root: Path) -> tuple[int, list[str]]:
     return checked.count, [str(p) for p in checked]
 
 
+STANDARDS_MODULE = Path(".factory") / "standards" / "standards.py"
+
+
+def standards_problems(root: Path) -> list[str]:
+    """Problems in the standards packs and [standards] config: E11 AC-11, ADR 0033."""
+    module = _load_module(root / STANDARDS_MODULE, "factory_standards")
+    return [] if module is None else [str(p) for p in module.validate(root)]
+
+
 BUILD_MODULE = Path(".factory") / "adapters" / "build.py"
 
 
@@ -727,6 +736,12 @@ def main(argv: Sequence[str] | None = None) -> int:
             raise GateError(
                 f"invalid agent files or lock records (python {AGENTS_MODULE.as_posix()} check):"
                 f"{listed}"
+            )
+        problems = standards_problems(root)
+        if problems:
+            listed = "".join(f"\ngate: {problem}" for problem in problems)
+            raise GateError(
+                f"invalid standards packs (python {STANDARDS_MODULE.as_posix()} check):{listed}"
             )
         docs_checked, doc_issues = doc_problems(root)
         commit, dirty = head_commit(root)
