@@ -16,6 +16,8 @@ KIT_DIR = ".factory"  # kit-managed files, tracked in the manifest
 STATE_DIR = ".agentic"  # state seeds, created only when missing
 # Folders of state seeds (ADR 0003): .agentic/, plus docs/ for the glossary and ADR README (E02).
 STATE_DIRS = (STATE_DIR, "docs")
+# Seed files inside .factory/ (ADR 0036): created when missing, never managed or in the manifest.
+SEED_FILES = frozenset({".factory/standards/house/rules.md"})
 # Kit files written with mode 0o755 (E07 AC-04): the git hook shims.
 EXECUTABLE_FILES = frozenset({".factory/gates/hooks/pre-commit", ".factory/gates/hooks/pre-push"})
 
@@ -28,6 +30,8 @@ class Kit:
     extra_managed: frozenset[str] = frozenset()
 
     def is_kit_managed(self, rel: str) -> bool:
+        if rel in SEED_FILES:
+            return False
         return rel.startswith(KIT_DIR + "/") or rel in self.extra_managed
 
 
