@@ -1,0 +1,10 @@
+task = "E18-T4"
+locked = 2026-11-23T20:55:12Z
+
+[[files]]
+path = "tests/test_jobs_resume.py"
+sha256 = "576799fb2403a98d41211bb63519fae814908cb76003d60ef327f1103706ef91"
+
+[[files]]
+path = "tests/test_jobs_done_when.py"
+sha256 = "6139dd72024d6721eef7f835d3de44b7a245365578e4511f2c6f188121fcde09"
