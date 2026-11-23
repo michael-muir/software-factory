@@ -15,7 +15,8 @@ for leases, which live only in the index (ADR 0052). Everything is under
 Usage:
     jobs.py new "<title>" [--id ID] [--track T] [--task TASK] [--branch B] [--worktree PATH]
     jobs.py show <job> [--json]
-    jobs.py list [--status S] [--json]
+    jobs.py list [--status S] [--json] [--cached]
+    jobs.py daemons [--json]
     jobs.py rebuild
     jobs.py set <job> [--session S] [--title T] [--track T] [--phase P] [--status S]
                 [--task TASK] [--branch B] [--worktree PATH]
@@ -206,11 +207,36 @@ def find_repo(cwd: Path) -> Repo:
         raise BadInput(f"{cwd} is not inside a git repository")
     if _git(cwd, "rev-parse", "--verify", "-q", "HEAD^{commit}").returncode != 0:
         raise BadInput("the git repository has no commit yet")
-    listing = _git(cwd, "worktree", "list", "--porcelain")
+    common_dir = Path(common.stdout.strip())
+    return Repo(main=main_worktree(cwd, common_dir), store=common_dir / "factory")
+
+
+LISTING_TRIES = (0.1, 0.2, 0.4, 0.8)  # back-off between tries of `git worktree list` (#87)
+
+
+def _listing(cwd: Path) -> subprocess.CompletedProcess[str]:
+    """`git worktree list --porcelain`, retried: another process's `git worktree add` can make
+    it fail, or come back empty, for a moment (#87)."""
+    for pause in (*LISTING_TRIES, None):
+        listing = _git(cwd, "worktree", "list", "--porcelain")
+        if listing.returncode == 0 and "worktree " in listing.stdout:
+            return listing
+        if pause is not None:
+            time.sleep(pause)
+    return listing
+
+
+def main_worktree(cwd: Path, common: Path) -> Path:
+    """The main worktree's root: the common dir's parent when that is a normal `.git` folder,
+    found without listing; otherwise the first entry of `git worktree list` (#87)."""
+    dot_git = common.parent / ".git"
+    if common.name == ".git" and dot_git.is_dir() and os.path.samefile(dot_git, common):
+        return common.parent
+    listing = _listing(cwd)
     first = next((ln for ln in listing.stdout.splitlines() if ln.startswith("worktree ")), "")
     if listing.returncode != 0 or not first:
         raise BadInput("cannot find the repository's main worktree")
-    return Repo(main=Path(first[len("worktree ") :]), store=Path(common.stdout.strip()) / "factory")
+    return Path(first[len("worktree ") :])
 
 
 def load_config(repo: Repo) -> Config:
@@ -485,9 +511,13 @@ MIGRATIONS: tuple[tuple[str, ...], ...] = (
         " review_round INTEGER, open_findings TEXT, handoff TEXT, next TEXT,"
         " PRIMARY KEY (worktree, task))",
     ),
+    (  # 3 (E18-T3): daemon heartbeats
+        "CREATE TABLE daemons (id TEXT PRIMARY KEY, host TEXT, pid INTEGER, started REAL NOT NULL,"
+        " beat REAL NOT NULL)",
+    ),
 )
 SCHEMA_VERSION = len(MIGRATIONS)
-LIVE_TABLES = ("leases",)  # not derived from files: kept by a rebuild
+LIVE_TABLES = ("leases", "daemons")  # not derived from files: kept by a rebuild
 DERIVED_TABLES = (
     "jobs",
     "job_tasks",
@@ -836,7 +866,7 @@ def _section(body: str, heading: str) -> str:
 
 
 def _worktree_list(repo: Repo) -> list[dict[str, str]]:
-    listing = _git(repo.main, "worktree", "list", "--porcelain")
+    listing = _listing(repo.main)
     if listing.returncode != 0:
         raise BadInput(f"git worktree list failed: {listing.stderr.strip()}")
     found: list[dict[str, str]] = []
@@ -964,6 +994,42 @@ def take_snapshot(repo: Repo) -> Snapshot:
     return snap
 
 
+def _put_runner(
+    con: sqlite3.Connection, view: dict[str, Any], usage: list[tuple[str, str, str, str]]
+) -> None:
+    runner_id = view["id"]
+    for table, key in (("runner_jobs", "id"), ("commands", "runner_job"), ("usage", "runner_job")):
+        con.execute(f"DELETE FROM {table} WHERE {key} = ?", (runner_id,))  # fixed names
+    con.execute(
+        "INSERT INTO runner_jobs VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (
+            runner_id,
+            view.get("status", ""),
+            view.get("task", ""),
+            view.get("daemon", ""),
+            view.get("usd", 0.0),
+            view.get("created", ""),
+            json.dumps(view),
+        ),
+    )
+    con.executemany(
+        "INSERT INTO commands VALUES (?, ?, ?, ?, ?, ?, ?)",
+        [
+            (
+                runner_id,
+                n,
+                json.dumps(c.get("argv")),
+                c.get("exit_code"),
+                c.get("started"),
+                c.get("duration_s"),
+                c.get("log"),
+            )
+            for n, c in enumerate(view.get("commands", []), start=1)
+        ],
+    )
+    con.executemany("INSERT OR REPLACE INTO usage VALUES (?, ?, ?, ?)", usage)
+
+
 def _apply(con: sqlite3.Connection, snap: Snapshot) -> None:
     """Replace every derived row with the snapshot. Leases are kept (ADR 0051)."""
     for table in DERIVED_TABLES:
@@ -971,35 +1037,11 @@ def _apply(con: sqlite3.Connection, snap: Snapshot) -> None:
     for data in snap.records:
         _put_job(con, snap.repo, data)
     con.executemany("INSERT OR REPLACE INTO problems VALUES (?, ?)", snap.problems)
+    usage_by_runner: dict[str, list[tuple[str, str, str, str]]] = {}
+    for row in snap.usage:
+        usage_by_runner.setdefault(row[0], []).append(row)
     for view in snap.runners:
-        con.execute(
-            "INSERT INTO runner_jobs VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (
-                view["id"],
-                view.get("status", ""),
-                view.get("task", ""),
-                view.get("daemon", ""),
-                view.get("usd", 0.0),
-                view.get("created", ""),
-                json.dumps(view),
-            ),
-        )
-        con.executemany(
-            "INSERT INTO commands VALUES (?, ?, ?, ?, ?, ?, ?)",
-            [
-                (
-                    view["id"],
-                    n,
-                    json.dumps(c.get("argv")),
-                    c.get("exit_code"),
-                    c.get("started"),
-                    c.get("duration_s"),
-                    c.get("log"),
-                )
-                for n, c in enumerate(view.get("commands", []), start=1)
-            ],
-        )
-    con.executemany("INSERT OR REPLACE INTO usage VALUES (?, ?, ?, ?)", snap.usage)
+        _put_runner(con, view, usage_by_runner.get(view["id"], []))
     for tree in snap.worktrees:
         con.execute(
             "INSERT OR REPLACE INTO worktrees VALUES (?, ?, ?, ?, ?, ?)",
@@ -1045,6 +1087,95 @@ def _index_job(repo: Repo, data: dict[str, Any]) -> None:
             _put_job(con, repo, data)
     except (IndexUnavailable, IndexTooNew) as exc:
         _warn(f"the index wasn't updated: {exc}")
+
+
+# --- the runner's hooks (ADR 0053): run.py calls these, and treats any failure as a warning ------
+
+
+def refresh_runner(repo: Repo, runner_id: str) -> None:
+    """Re-read one runner job's files and replace its rows (spec AC-06)."""
+    view = runner_view(repo, runner_id, _runner_worktree_root(repo.main))
+    usage = _usage_files(repo.store / "jobs" / runner_id / "usage")
+    rows = [(runner_id, name, str(amount), at) for name, amount, at in usage]
+    with _index(repo) as con, _transaction(con):
+        if view is None:
+            for table, key in (("runner_jobs", "id"), ("commands", "runner_job")):
+                con.execute(f"DELETE FROM {table} WHERE {key} = ?", (runner_id,))  # fixed names
+        else:
+            _put_runner(con, view, rows)
+
+
+def daemon_beat(repo: Repo, daemon_id: str, now: float) -> None:
+    """A runner daemon's heartbeat, under the id its records carry (`host:pid:hex`, AC-14)."""
+    host, _, rest = daemon_id.partition(":")
+    pid_text = rest.partition(":")[0]
+    pid = int(pid_text) if pid_text.isdigit() else None
+    with _index(repo) as con, _transaction(con):
+        con.execute(
+            "INSERT INTO daemons (id, host, pid, started, beat) VALUES (?, ?, ?, ?, ?)"
+            " ON CONFLICT (id) DO UPDATE SET beat = excluded.beat",
+            (daemon_id, host, pid, now, now),
+        )
+
+
+def renew_for_task(repo: Repo, task: str, now: float) -> None:
+    """While a runner job's command runs, keep the live lease of the job it belongs to (AC-13).
+    A lease that has already expired is never revived: that job has crashed."""
+    with _index(repo) as con, _transaction(con):
+        owner = con.execute(_BELONGS, (task,)).fetchone()
+        if owner is None:
+            return
+        lease = _lease(con, owner[0])
+        if lease is None or lease.expires <= now:
+            return
+        expires = max(lease.expires, now + lease.minutes * 60)
+        _put_lease(con, Lease(lease.job, lease.session, lease.acquired, expires, lease.minutes))
+
+
+def _daemon_entries(con: sqlite3.Connection, now: float, timeout: float) -> list[dict[str, Any]]:
+    """Every daemon with a heartbeat, and every daemon a running runner job names, with its
+    state and the running runner jobs it left stale (AC-14)."""
+    found: dict[str, dict[str, Any]] = {}
+    for daemon_id, host, pid, started, beat in con.execute(
+        "SELECT id, host, pid, started, beat FROM daemons ORDER BY id"
+    ).fetchall():
+        found[daemon_id] = {
+            "id": daemon_id,
+            "host": host,
+            "pid": pid,
+            "started": _iso(started),
+            "beat": _iso(beat),
+            "state": "alive" if now - beat <= timeout else "dead",
+            "stale_runner_jobs": [],
+        }
+    for runner_id, daemon_id in con.execute(
+        "SELECT id, daemon FROM runner_jobs WHERE status = 'running' ORDER BY id"
+    ).fetchall():
+        key = daemon_id or ""
+        if key not in found:
+            host, _, rest = key.partition(":")
+            pid_text = rest.partition(":")[0]
+            found[key] = {
+                "id": key,
+                "host": host,
+                "pid": int(pid_text) if pid_text.isdigit() else None,
+                "started": None,
+                "beat": None,
+                "state": "dead",  # no heartbeat at all: never seen, or lost with the index
+                "stale_runner_jobs": [],
+            }
+        if found[key]["state"] == "dead":
+            found[key]["stale_runner_jobs"].append(runner_id)
+    return [found[k] for k in sorted(found)]
+
+
+def daemons(repo: Repo, *, now: float | None = None) -> list[dict[str, Any]]:
+    """Each daemon, `alive` or `dead` by `jobs.daemon_timeout_seconds`, and its stale runner
+    jobs. The runner's files are never changed: repairing them is E22's."""
+    config = load_config(repo)
+    _refresh(repo)
+    with _index(repo) as con:
+        return _daemon_entries(con, _now(now), config.daemon_timeout_seconds)
 
 
 # --- leases (ADR 0052) --------------------------------------------------------------------------
@@ -1307,7 +1438,14 @@ _BELONGS = (
 )
 
 
-def _job_entries(con: sqlite3.Connection, now: float) -> list[dict[str, Any]]:
+def _job_entries(con: sqlite3.Connection, now: float, timeout: float) -> list[dict[str, Any]]:
+    stale_jobs: set[str] = set()
+    for daemon in _daemon_entries(con, now, timeout):
+        for runner_id in daemon["stale_runner_jobs"]:
+            task = con.execute("SELECT task FROM runner_jobs WHERE id = ?", (runner_id,)).fetchone()
+            owner = con.execute(_BELONGS, (task[0],)).fetchone() if task else None
+            if owner:
+                stale_jobs.add(owner[0])
     rows = con.execute(
         "SELECT id, title, track, phase, status, task, tasks, branch, worktree, owner, created,"
         " updated FROM jobs ORDER BY created, id"
@@ -1320,7 +1458,7 @@ def _job_entries(con: sqlite3.Connection, now: float) -> list[dict[str, Any]]:
         entry.update(worktree=row[8], owner=row[9], created=row[10], updated=row[11])
         lease = _lease(con, entry["id"])
         entry["state"] = _state(entry, lease, now)
-        entry["stale"] = False  # E18-T3: runner jobs of a dead daemon
+        entry["stale"] = entry["id"] in stale_jobs  # a running runner job of a dead daemon
         entry["lease"] = (
             None if lease is None else {k: v for k, v in lease.as_json().items() if k != "job"}
         )
@@ -1374,13 +1512,16 @@ def _worktree_entries(con: sqlite3.Connection) -> list[dict[str, Any]]:
 
 
 def index_listing(
-    repo: Repo, *, status: str | None = None, now: float | None = None
+    repo: Repo, *, status: str | None = None, now: float | None = None, cached: bool = False
 ) -> dict[str, Any]:
-    """Refresh the index from the files, then return what it holds (spec AC-05, AC-10)."""
-    _refresh(repo)
+    """Refresh the index from the files (unless `cached`), then return what it holds (spec
+    AC-05, AC-10). `cached` answers from the rows alone, as a dashboard would."""
+    config = load_config(repo)
+    if not cached:
+        _refresh(repo)
     moment = _now(now)
     with _index(repo) as con:
-        jobs = _job_entries(con, moment)
+        jobs = _job_entries(con, moment, config.daemon_timeout_seconds)
         data = {
             "jobs": [j for j in jobs if status is None or j["status"] == status],
             "runner_jobs": _runner_entries(con),
@@ -1494,7 +1635,7 @@ def _show(args: argparse.Namespace) -> int:
 
 def _list(args: argparse.Namespace) -> int:
     repo, _ = _repo_and_config()
-    data = index_listing(repo, status=args.status)
+    data = index_listing(repo, status=args.status, cached=args.cached)
     if args.json:
         print(json.dumps(data, indent=2))
         return 0
@@ -1505,6 +1646,18 @@ def _list(args: argparse.Namespace) -> int:
         print("  ".join(cells) + "  " + job["title"])
     for problem in data["problems"]:
         print(f"problem: {problem['path']}: {problem['problem']}")
+    return 0
+
+
+def _daemons(args: argparse.Namespace) -> int:
+    repo, _ = _repo_and_config()
+    found = daemons(repo)
+    if args.json:
+        print(json.dumps(found, indent=2))
+        return 0
+    for entry in found:
+        stale = ", ".join(entry["stale_runner_jobs"]) or "none"
+        print(f"{entry['id']}  {entry['state']}  beat {entry['beat'] or 'never'}  stale: {stale}")
     return 0
 
 
@@ -1578,7 +1731,14 @@ def _parser() -> argparse.ArgumentParser:
     list_ = commands.add_parser("list", help="list every job, refreshed from the files")
     list_.add_argument("--status", choices=STATUSES, help="only jobs with this status")
     list_.add_argument("--json", action="store_true", help="print the whole index as JSON")
+    list_.add_argument(
+        "--cached", action="store_true", help="answer from the index without re-reading files"
+    )
     list_.set_defaults(run=_list)
+
+    daemons_ = commands.add_parser("daemons", help="list the runner daemons, alive or dead")
+    daemons_.add_argument("--json", action="store_true")
+    daemons_.set_defaults(run=_daemons)
 
     rebuild = commands.add_parser("rebuild", help="rebuild the index from the files")
     rebuild.set_defaults(run=_rebuild)

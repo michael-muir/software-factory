@@ -1,0 +1,10 @@
+task = "E18-T3"
+locked = 2026-11-23T19:04:07Z
+
+[[files]]
+path = "tests/test_jobs_hooks.py"
+sha256 = "fb5e695a7ac13f25c83a640c44a3472628a74e90ca95eb1558031218b45562f4"
+
+[[files]]
+path = "tests/test_find_repo.py"
+sha256 = "aa745984be0d053d8b92a441fb1a563499e1b9432a6035a0e2e663040b8e9691"
