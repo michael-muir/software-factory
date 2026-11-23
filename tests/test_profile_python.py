@@ -73,7 +73,8 @@ def test_python_profile_matches_the_spec() -> None:
     # Change, 20 Nov 2026: Windows CI mutation passed 1800 s on PRs touching big kit files.
     assert checks["mutation"]["timeout_s"] == 3600
     # E07/T4 change: the Windows CI runner needs more than 600 s for this repo's tests.
-    assert checks["tests"]["timeout_s"] == 1200
+    # Change, 23 Nov 2026: Windows CI's tests step reached about 1,100 s of 1,200 s.
+    assert checks["tests"]["timeout_s"] == 2400
     timed = ("mutation", "tests")
     assert all("timeout_s" not in table for name, table in checks.items() if name not in timed)
 
