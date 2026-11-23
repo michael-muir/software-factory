@@ -92,7 +92,7 @@ def read(name: str) -> standards.Pack:
 
 @pytest.mark.ac("E11-AC-05")
 def test_the_kit_ships_exactly_the_twelve_packs_and_the_house_seed() -> None:
-    folders = {p.name for p in KIT_STANDARDS.iterdir() if p.is_dir()}
+    folders = {p.name for p in KIT_STANDARDS.iterdir() if p.is_dir() and p.name != "__pycache__"}
     assert folders == set(PACKS) | {"house"}
     for name in PACKS:
         assert (KIT_STANDARDS / name / "rules.md").is_file(), name
