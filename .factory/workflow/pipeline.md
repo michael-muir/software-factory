@@ -2,7 +2,7 @@
 
 A job on the full track goes through nine stages. Each stage is done by the role that owns it, and it passes only when its check, which is code, accepts what the stage committed. People do two things: they approve the spec, and they merge the PR. This page is for the people who run the line. The stage table in `pipeline.py` (`STAGES`) is the source, and a test keeps this page in step with it (ADR 0040).
 
-This version of the kit drives the plan: `pipeline.py check`, `new`, `run` (through the spec and design stages, and the test and build stages of each task), `approve`, `reject`, `resume`, `cancel` and `status`. The gate, review, docs, ship and learn stages arrive with E13-T3. Until then a job that reaches one stops for a human.
+`pipeline.py run` drives a job through every stage: the plan, then each task's slice to a merged PR, then the learn stage's summary. It stops at each checkpoint and whenever a human is needed.
 
 ## The stages
 
@@ -26,6 +26,19 @@ This version of the kit drives the plan: `pipeline.py check`, `new`, `run` (thro
 
 **What each check reads:** only committed files and history, through `git show`, `git log` and `git diff <base>..HEAD`. A file that's only on disk doesn't count. The gate, review, ship and learn checks also read the job's record: its gate reports, the review sessions that finished, the PR, and which tasks have merged.
 
+## What the driver does itself
+
+Some steps are commands the driver sends on the slice's runner job, not role sessions:
+
+- **The gate:** `gates.python_command` with `.factory/gates/gate.py --json-out <scratch>/gate-<n>.json`. The driver keeps each report in the record. On a red report it sends the `debugger`, with the report as `$FACTORY_GATE_REPORT`, then runs the gate again, up to `pipeline.gate_retries` times. If it's still red, the job stops for a human with the failing checks.
+- **Findings commits:** the reviewers can't commit, so after each review session the driver commits the task file, if it changed (`chore(<task>): review findings from <role>`). After the sixth, it sets the task's review round to 1 with `state.py task set <task> --round 1`, and commits that too. An open blocker or major finding then stops the job, and the reason lists the findings. Minor ones go on to the PR body.
+- **The docs commit:** the `docs-writer` has no shell, so the driver commits what it changed (`docs(<task>): changelog entry from the docs-writer`), then runs the full gate again on the new head. The ship stage uses that report.
+- **Ship:** the `integrator` writes the filled-in PR body to `$FACTORY_PR_BODY`. The driver checks it with `check-pr --strict` for the branch's commits, and a body that fails stops the job before anything is pushed. Then the driver pushes the branch to `factory/<job>-t<n>` and opens the PR through the forge: GitHub's REST API (`gh api repos/<owner>/<repo>/pulls`, never GraphQL), or, for `forge = "git"`, the pushed branch is the PR.
+- **Merge:** `run` on a job awaiting a merge asks the forge. GitHub's `merged: true`, or for plain git the pushed head being an ancestor of `origin/<base_ref>`, counts as merged. Until then nothing changes. A PR closed without merging stops the job for a human. Once it has merged, the driver fetches `origin`, and the next task starts from `origin/<base_ref>`.
+- **Learn:** after the last merge, the driver writes the summary and marks the job done.
+
+The scratch files (`gate-<n>.json`, `gate-report.json`, `pr-body.md`) live in the runner worktree's own git dir, under `factory-pipeline`, so git never tracks them and the tree stays clean.
+
 ## The checkpoints
 
 | Checkpoint | After stage | Passes when                                                                                     |
@@ -44,7 +57,7 @@ This version of the kit drives the plan: `pipeline.py check`, `new`, `run` (thro
 - `pipeline.py run <job>` claims the job's lease, and drives it to the next checkpoint, to a human, or to the end.
 - `pipeline.py approve <job> <checkpoint> --by <name>` and `pipeline.py reject ...` record a decision. Approving commits the document's new status line on the plan branch.
 - `pipeline.py resume <job> [--note TEXT]` reruns a stage that stopped for a human, and `pipeline.py cancel <job>` cancels the job.
-- `pipeline.py status <job> [--json]` prints the job and its pipeline record.
+- `pipeline.py status <job> [--json]` prints the job and its pipeline record, and once the job is done, its summary and closing handoff.
 
 Exit codes: 0 done (or the check passed), 1 refused (a check failed, or a checkpoint is waiting), 2 bad input.
 
@@ -72,7 +85,7 @@ The cost each session reports (`total_cost_usd` in its JSON output) goes to the 
 
 - **The job** is E18's record, `work/<id>.toml`, under `<git-common-dir>/factory/`. Its lease says who may write.
 - **The pipeline record** is E18's sidecar `work/<id>.pipeline.toml`. It holds the status, the stage, the tasks and their PRs, the runner jobs, every session sent with its exit code and cost, each gate report, each PR body, and every decision.
-- **The summary,** written at the learn stage, is the sidecar `work/<id>.summary.toml`, with the closing handoff's text.
+- **The summary,** written at the learn stage, is the sidecar `work/<id>.summary.toml`. It holds the job, each stage's times and cost, each gate run's verdict, each finding, each PR, the total cost, and the closing handoff's text (`## Done`, `## Next`, `## Open questions`). E28's retro reads it.
 
 Git never tracks any of these.
 

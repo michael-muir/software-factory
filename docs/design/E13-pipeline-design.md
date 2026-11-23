@@ -287,6 +287,14 @@ Each slice ships on its own:
   - The spec stage's prompt carries the request text, since a session can't read the job's sidecar outside its worktree.
   - The driver renews the lease before every write of the record, so a session longer than the lease never loses it.
   - Until T3, a job that reaches the gate, review, docs, ship or learn stage stops for a human.
+- **21 Nov 2026, while building T3:**
+  - `Forge.state` also takes the pushed head commit: the plain-git forge checks that commit against `origin/<base>`, because the branch may be gone once it has merged.
+  - The docs-writer has no shell, so the driver commits what it changed, as it does the reviewers' findings. The commit is sent through a small internal command, `pipeline.py _commit MESSAGE -- PATH...`, which commits only when something under the paths changed.
+  - The review round is set with `state.py task set <task> --round 1` as a runner command, and committed like the findings.
+  - `[[tasks]]` entries also record the pushed `head`, the attempt the PR was `opened` for, and the task's committed `findings` (as JSON), for merge detection and the summary.
+  - `gate-report.json` in the scratch folder hands the newest gate report to the Debugger and the Integrator, as `$FACTORY_GATE_REPORT`, even in a new segment's worktree.
+  - The GitHub forge reads origin's configured URL (`git config remote.origin.url`), not `git remote get-url`, so an `insteadOf` rewrite doesn't hide which repository it is.
+  - A gate report's failing checks are named from each check's `profile` and `check`, as `gate.py --json-out` writes them. The stage check read a `name` key, which real reports don't have.
 
 ## Risks
 
