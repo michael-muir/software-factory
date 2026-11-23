@@ -23,8 +23,10 @@ Usage:
     jobs.py claim <job> [--session S] [--force] [--json]
     jobs.py beat <job> [--session S] [--json]
     jobs.py release <job> [--session S]
+    jobs.py resume <job> [--session S] [--force] [--json]
 
-The session is --session, else $FACTORY_SESSION; `claim` generates one if neither is given.
+The session is --session, else $FACTORY_SESSION; `claim` and `resume` generate one if neither
+is given.
 Exit codes: 0 done, 1 refused, 2 bad input (arguments, config, unknown job, no git repo).
 """
 
@@ -39,6 +41,7 @@ import json
 import os
 import re
 import secrets
+import shlex
 import socket
 import subprocess
 import sys
@@ -1562,6 +1565,379 @@ def job_context(repo: Repo, job_id: str, listing: dict[str, Any]) -> dict[str, A
     return {"runner_jobs": runners, "worktree_state": tree}
 
 
+# --- resume (spec AC-15, AC-16) -----------------------------------------------------------------
+
+RESUME_COMMANDS = 5  # the last commands shown for each runner job
+STATE_FILE = ".agentic/STATE.md"
+TASKS_DIR = ".agentic/tasks/"
+HANDOFFS_DIR = ".agentic/handoffs/"
+
+
+def _git_bytes(
+    cwd: Path, *args: str, stdin: bytes | None = None
+) -> subprocess.CompletedProcess[bytes]:
+    """git with raw output, decoded by the caller as UTF-8 whatever the locale says."""
+    try:
+        return subprocess.run(
+            ["git", *args], cwd=cwd, input=stdin, capture_output=True, check=False
+        )
+    except OSError as exc:
+        raise BadInput(f"cannot run git: {exc}") from exc
+
+
+def _branch_exists(repo: Repo, branch: str) -> bool:
+    if not branch:
+        return False
+    found = _git_bytes(repo.main, "rev-parse", "--verify", "-q", f"refs/heads/{branch}^{{commit}}")
+    return found.returncode == 0
+
+
+def _registered(repo: Repo, worktree: str) -> bool:
+    """Whether git still lists the worktree, even with its folder gone (`prunable`)."""
+    listing = _listing(repo.main)
+    paths = [
+        ln[len("worktree ") :] for ln in listing.stdout.splitlines() if ln.startswith("worktree ")
+    ]
+    return any(_same_path(p, worktree) for p in paths)
+
+
+def _state_rel(rel: str, task: str) -> bool:
+    """The state files resume reads: STATE.md, the job's task file, and every handoff."""
+    if rel == STATE_FILE or rel == f"{TASKS_DIR}{task}.md":
+        return True
+    name = rel[len(HANDOFFS_DIR) :]
+    return rel.startswith(HANDOFFS_DIR) and name.endswith(".md") and "/" not in name
+
+
+def _worktree_files(path: Path, task: str) -> dict[str, str]:
+    agentic = path / ".agentic"
+    candidates = [agentic / "STATE.md", agentic / "tasks" / f"{task}.md"]
+    if (agentic / "handoffs").is_dir():
+        candidates += sorted((agentic / "handoffs").glob("*.md"))
+    files: dict[str, str] = {}
+    for file in candidates:
+        rel = file.relative_to(path).as_posix()
+        if file.is_file() and _state_rel(rel, task):
+            with contextlib.suppress(OSError, UnicodeDecodeError):
+                files[rel] = file.read_text(encoding="utf-8")
+    return files
+
+
+def _branch_files(repo: Repo, branch: str, task: str) -> dict[str, str]:
+    """The state files committed on a branch, read with `git ls-tree` and `git cat-file`."""
+    ref = f"refs/heads/{branch}"
+    listed = _git_bytes(repo.main, "ls-tree", "-r", "-z", "--name-only", ref, "--", ".agentic/")
+    if listed.returncode != 0:
+        return {}
+    names = [raw.decode("utf-8", "replace") for raw in listed.stdout.split(b"\0") if raw]
+    wanted = [rel for rel in names if "\n" not in rel and _state_rel(rel, task)]
+    if not wanted:
+        return {}
+    batch = _git_bytes(
+        repo.main,
+        "cat-file",
+        "--batch",
+        stdin="".join(f"{ref}:{rel}\n" for rel in wanted).encode("utf-8"),
+    )
+    files: dict[str, str] = {}
+    out, pos = batch.stdout, 0
+    for rel in wanted:
+        end = out.find(b"\n", pos)
+        if end < 0:
+            break
+        header = out[pos:end].split()
+        pos = end + 1
+        if len(header) != 3 or not header[2].isdigit():
+            continue  # "<ref>:<path> missing"
+        size = int(header[2])
+        files[rel] = out[pos : pos + size].decode("utf-8", "replace")
+        pos += size + 1
+    return files
+
+
+def _state_from_files(files: dict[str, str], task: str, source: str, place: str) -> dict[str, Any]:
+    """The phase, active task, the job's task and its newest handoff, from state file texts."""
+    found: dict[str, Any] = {
+        "source": source,
+        "place": place,
+        "phase": "",
+        "active_task": "",
+        "task": None,
+        "handoff": None,
+        "next": "",
+        "problems": [],
+    }
+    state = _state_module()
+    if state is None:
+        found["problems"].append("the kit's state.py isn't installed")
+        return found
+
+    def parsed(rel: str) -> tuple[dict[str, Any], str] | None:
+        result = state.parse(files[rel])
+        if isinstance(result, str):
+            found["problems"].append(f"{rel}: {result}")
+            return None
+        return result[0], result[1]
+
+    text = files.get(STATE_FILE)
+    if text is not None and text.replace("\r\n", "\n") != state.E01_PLACEHOLDER:
+        got = parsed(STATE_FILE)
+        if got is not None:
+            found["phase"] = str(got[0].get("phase", ""))
+            found["active_task"] = str(got[0].get("active_task", ""))
+    task_rel = f"{TASKS_DIR}{task}.md"
+    if task_rel in files:
+        got = parsed(task_rel)
+        if got is not None:
+            front = got[0]
+            findings = front.get("findings", [])
+            found["task"] = {
+                "id": task,
+                "title": str(front.get("title", "")),
+                "status": str(front.get("status", "")),
+                "review_round": front.get("review_round", 0),
+                "open_findings": [
+                    {k: f.get(k) for k in ("id", "severity", "summary")}
+                    for f in (findings if isinstance(findings, list) else [])
+                    if isinstance(f, dict) and f.get("status") == "open"
+                ],
+            }
+    best: tuple[Any, str, dict[str, Any], str] | None = None
+    for rel in sorted(r for r in files if r.startswith(HANDOFFS_DIR)):
+        got = parsed(rel)
+        if got is None or str(got[0].get("task", "")) != task:
+            continue
+        order = state._handoff_order(rel, got[0])
+        if best is None or order > best[0]:
+            best = (order, rel, got[0], got[1])
+    if best is not None:
+        _, rel, front, body = best
+        found["handoff"] = {
+            "path": rel,
+            "from": str(front.get("from", "")),
+            "to": str(front.get("to", "")),
+            "created": str(_jsonable(front.get("created", ""))),
+            "body": body,
+        }
+        found["next"] = _section(body, "## Next")
+    return found
+
+
+def _state_from_index(tree: dict[str, Any], task: str) -> dict[str, Any]:
+    """What the index still holds about a worktree that has gone, with its branch."""
+    entry = next((t for t in tree["tasks"] if t["id"] == task), None)
+    return {
+        "source": "index",
+        "place": tree["path"],
+        "phase": tree["phase"],
+        "active_task": tree["active_task"],
+        "task": None
+        if entry is None
+        else {
+            "id": task,
+            "title": "",
+            "status": entry["status"],
+            "review_round": entry["review_round"],
+            "open_findings": entry["open_findings"],
+        },
+        "handoff": None if entry is None or not entry["handoff"] else {"path": entry["handoff"]},
+        "next": "" if entry is None else entry["next"],
+        "problems": [],
+    }
+
+
+def _where_from(data: dict[str, Any], runners: list[dict[str, Any]]) -> tuple[str, str]:
+    """The job's branch and worktree, each from its record or else its newest runner job that
+    has left the queue (a queued one has no worktree yet), else its newest runner job."""
+    started = [r for r in runners if r.get("status") != "queued"] or runners
+    newest = started[-1] if started else {}
+    branch = data["branch"] or str(newest.get("branch") or "")
+    worktree = data["worktree"] or str(newest.get("worktree") or "")
+    return branch, worktree
+
+
+def _command_line(argv: list[str]) -> str:
+    return subprocess.list2cmdline(argv) if sys.platform == "win32" else shlex.join(argv)
+
+
+def resume(
+    repo: Repo,
+    config: Config,
+    job_id: str,
+    session: str,
+    *,
+    force: bool = False,
+    now: float | None = None,
+) -> dict[str, Any]:
+    """Claim the job by `claim`'s rules, then gather what a new session needs to carry on:
+    the job and its lease, where it works, its runner jobs and cost, and its state (AC-15,
+    AC-16). A live lease held by another session is Refused, unless `force`."""
+    moment = _now(now)
+    lease = claim(repo, config, job_id, session, force=force, now=moment)
+    data = read_job(repo, job_id)
+    before = index_listing(repo, cached=True, now=moment)
+    old_runners = [r for r in before["runner_jobs"] if r["belongs_to"] == job_id]
+    _, old_tree = _where_from(data, sorted(old_runners, key=lambda r: str(r.get("created", ""))))
+    cached = next(
+        (w for w in before["worktrees"] if old_tree and _same_path(w["path"], old_tree)), None
+    )
+    listing = index_listing(repo, now=moment)
+    context = job_context(repo, job_id, listing)
+    runners: list[dict[str, Any]] = context["runner_jobs"]
+    branch, worktree = _where_from(data, runners)
+    trees = [w["path"] for w in listing["worktrees"]]
+    worktree_exists = bool(worktree) and any(_same_path(p, worktree) for p in trees)
+    branch_exists = _branch_exists(repo, branch)
+    notes: list[str] = []
+    rebuild: list[list[str]] = []
+    if not branch and not worktree:
+        notes.append("the job names no branch or worktree, and no runner job has one")
+    elif branch and not branch_exists:
+        notes.append(f"the branch {branch} doesn't exist")
+    if worktree and not worktree_exists:
+        if branch_exists:
+            if _registered(repo, worktree):
+                rebuild.append(["git", "worktree", "prune"])
+            rebuild.append(["git", "worktree", "add", worktree, branch])
+            notes.append(
+                f"the worktree {worktree} has gone; rebuild it from the branch {branch} with: "
+                + " && ".join(_command_line(argv) for argv in rebuild)
+            )
+            notes.append(f"the task and handoff are read from the branch {branch}'s commits")
+        elif branch:
+            notes.append(
+                f"the worktree {worktree} and the branch {branch} have both gone; "
+                "this is what the index still has"
+            )
+        else:
+            notes.append(f"the worktree {worktree} has gone, and the job names no branch")
+    task = data["task"]
+    if worktree_exists:
+        state = _state_from_files(_worktree_files(Path(worktree), task), task, "worktree", worktree)
+    elif branch_exists:
+        state = _state_from_files(_branch_files(repo, branch, task), task, "branch", branch)
+    elif cached is not None:
+        state = _state_from_index(cached, task)
+    else:
+        state = _state_from_files({}, task, "none", "")
+    usd_by_runner: dict[str, decimal.Decimal] = {}
+    for row in listing["usage"]:
+        amount = usd_by_runner.get(row["runner_job"], decimal.Decimal(0))
+        usd_by_runner[row["runner_job"]] = amount + decimal.Decimal(row["usd"])
+    with _index(repo) as con:
+        stale = {
+            runner_id
+            for daemon in _daemon_entries(con, moment, config.daemon_timeout_seconds)
+            for runner_id in daemon["stale_runner_jobs"]
+        }
+    runner_entries: list[dict[str, Any]] = []
+    total = decimal.Decimal(0)
+    for runner in runners:
+        commands = list(enumerate(runner.get("commands", []), start=1))[-RESUME_COMMANDS:]
+        usd = usd_by_runner.get(runner["id"], decimal.Decimal(0))
+        total += usd
+        runner_entries.append(
+            {
+                "id": runner["id"],
+                "status": runner.get("status", ""),
+                "stale": runner["id"] in stale,
+                "task": runner.get("task", ""),
+                "branch": runner.get("branch", ""),
+                "worktree": runner.get("worktree", ""),
+                "commands": [
+                    {"n": n, "argv": c.get("argv"), "exit_code": c.get("exit_code")}
+                    for n, c in commands
+                ],
+                "usd": str(usd),
+            }
+        )
+    shown: dict[str, Any] = dict(data)
+    shown["state"] = _state(data, lease, moment)
+    shown["lease"] = lease.as_json()
+    shown["sidecars"] = sidecars(repo, job_id)
+    result = {
+        "job": shown,
+        "where": {
+            "branch": branch,
+            "branch_exists": branch_exists,
+            "worktree": worktree,
+            "worktree_exists": worktree_exists,
+            "rebuild": rebuild,
+            "notes": notes,
+        },
+        "runner_jobs": runner_entries,
+        "cost": {"usd": str(total)},
+        "state": state,
+    }
+    found = _jsonable(result)
+    assert isinstance(found, dict)
+    return found
+
+
+def _exists(value: str, exists: bool) -> str:
+    return "(none)" if not value else f"{value} ({'exists' if exists else 'gone'})"
+
+
+def render_resume(data: dict[str, Any]) -> str:
+    """`resume`'s text form: the same five sections as its JSON."""
+    job, where, state = data["job"], data["where"], data["state"]
+    lease = job["lease"]
+    lines = [
+        f"--- job {job['id']}: {job['title']}",
+        f"state: {job['state']}, held by {lease['session']} until {lease['expires']}",
+        f"track: {job['track']}   phase: {job['phase']}   status: {job['status']}",
+        f"task: {job['task']}   tasks: {', '.join(job['tasks'])}",
+        f"owner: {job['owner']}   created: {job['created']}   updated: {job['updated']}",
+    ]
+    lines += [f"sidecar {name}: {path}" for name, path in job["sidecars"].items()]
+    lines += [
+        "--- where",
+        f"branch: {_exists(where['branch'], where['branch_exists'])}",
+        f"worktree: {_exists(where['worktree'], where['worktree_exists'])}",
+    ]
+    lines += [f"rebuild: {_command_line(argv)}" for argv in where["rebuild"]]
+    lines += [f"note: {note}" for note in where["notes"]]
+    lines.append("--- runner jobs")
+    for runner in data["runner_jobs"]:
+        stale = "   STALE: its daemon is dead" if runner["stale"] else ""
+        lines.append(f"{runner['id']}: {runner['status']}   cost {runner['usd']}{stale}")
+        for command in runner["commands"]:
+            code = "not run" if command["exit_code"] is None else f"exit {command['exit_code']}"
+            lines.append(f"  {command['n']}. [{code}] {_command_line(command['argv'] or [])}")
+    if not data["runner_jobs"]:
+        lines.append("(none)")
+    lines += ["--- cost", f"total: {data['cost']['usd']}"]
+    source = {
+        "worktree": f"from the worktree {state['place']}",
+        "branch": f"from the branch {state['place']}",
+        "index": f"from the index, for the worktree {state['place']}",
+        "none": "none found",
+    }[state["source"]]
+    lines += [
+        f"--- state ({source})",
+        f"phase: {state['phase']}   active task: {state['active_task']}",
+    ]
+    task = state["task"]
+    if task is None:
+        lines.append(f"task {job['task']}: no task file")
+    else:
+        lines.append(f"task {task['id']}: {task['status']}   review round: {task['review_round']}")
+        lines.append("open findings:" if task["open_findings"] else "open findings: none")
+        lines += [f"  {f['id']} [{f['severity']}] {f['summary']}" for f in task["open_findings"]]
+    handoff = state["handoff"]
+    if handoff is None:
+        lines.append("no handoff for this task")
+    elif "body" in handoff:
+        to = handoff["to"] or "anyone"
+        lines.append(f"--- newest handoff: {handoff['path']} (from {handoff['from']} to {to})")
+        lines.append(handoff["body"].strip("\n"))
+    else:
+        lines += [f"--- newest handoff: {handoff['path']} (gone; its ## Next, from the index)"]
+        lines.append(state["next"])
+    lines += [f"problem: {p}" for p in state["problems"]]
+    return "\n".join(lines) + "\n"
+
+
 # --- the command line ---------------------------------------------------------------------------
 
 
@@ -1708,6 +2084,17 @@ def _release(args: argparse.Namespace) -> int:
     return 0
 
 
+def _resume(args: argparse.Namespace) -> int:
+    repo, config = _repo_and_config()
+    session = _session(args, generate=True)
+    data = resume(repo, config, args.job, session, force=args.force)
+    if args.json:
+        print(json.dumps(data, indent=2))
+    else:
+        sys.stdout.write(render_resume(data))
+    return 0
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="jobs.py", description="Software Factory job index: job records and leases."
@@ -1767,6 +2154,15 @@ def _parser() -> argparse.ArgumentParser:
     release_.add_argument("job")
     release_.add_argument("--session")
     release_.set_defaults(run=_release)
+
+    resume_ = commands.add_parser(
+        "resume", help="claim a job and print what a new session needs to carry on"
+    )
+    resume_.add_argument("job")
+    resume_.add_argument("--session")
+    resume_.add_argument("--force", action="store_true", help="take a live lease from another")
+    resume_.add_argument("--json", action="store_true")
+    resume_.set_defaults(run=_resume)
     return parser
 
 

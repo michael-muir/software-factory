@@ -184,7 +184,14 @@ Once a second gives a margin under the spec's "at least every 2 seconds". The ca
 4. **Cost:** the total across the job's runner jobs, as an exact decimal.
 5. **State:** from the worktree, or from the branch when the worktree has gone. The phase, the active task, the job's task with its status and open findings, and the newest handoff for that task, in full.
 
-`--json` prints one object with the same sections as keys.
+`--json` prints one object with the same sections as keys: `job`, `where`, `runner_jobs`, `cost` and `state`.
+
+Changed in T4:
+
+- **The newest runner job** for the branch and worktree is the newest that has left the queue, if there is one. A queued runner job has a worktree path but no worktree yet.
+- **The rebuild commands** are a list of argv lists, `where.rebuild`. If the worktree's folder was deleted but git still has it registered, `git worktree prune` comes first, because `git worktree add` would refuse otherwise.
+- **When the worktree and branch have both gone,** the state comes from the index's rows for that worktree, read before the refresh drops them: the phase, the active task, the task's status and findings, the newest handoff's path and its `## Next`. The handoff's whole text has gone with its files. After a rebuild there is nothing left, and `state.source` is `none`.
+- **The branch's files** are read with one `git ls-tree -z` and one `git cat-file --batch`, not a `git show` per file, and decoded as UTF-8 whatever the locale.
 
 ## Config
 
