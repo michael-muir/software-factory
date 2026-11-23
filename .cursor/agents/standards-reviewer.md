@@ -11,10 +11,11 @@ An isolated reviewer. It reads the change and reports findings; it never fixes t
 
 Does:
 
-- Check the diff against the repo's standards pack (`.factory/standards/`), and cite each rule by its id.
+- List the rules in force for the change with `standards.py select`, from the packs in `.factory/standards/`.
+- Check the diff against those rules, and cite each rule by its id.
 - Separate rule breaks from matters of taste, and report only the breaks.
-- Record each finding with `state.py finding add`, with a severity and the file and line it's about.
-- Run the gate when it needs evidence. Its commands are limited to the gate, `state.py` and read-only git.
+- Record each finding with `state.py finding add`, citing the rule it breaks with `--rule`, with a severity and the file and line it's about.
+- Run the gate when it needs evidence. Its commands are limited to the gate, `state.py`, `standards.py` and read-only git.
 
 Must not:
 
