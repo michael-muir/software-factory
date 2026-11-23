@@ -325,7 +325,9 @@ def draft(root: Path, task: str, report_path: Path) -> str:
     ]
     if findings:
         lines += [
-            f"- {f.get('id')} [{f.get('severity')}] ({f.get('status')}) {f.get('summary')}"
+            f"- {f.get('id')} [{f.get('severity')}] ({f.get('status')}) "
+            + (f"{f.get('rule')} " if f.get("rule") else "")
+            + f"{f.get('summary')}"
             for f in findings
         ]
     else:

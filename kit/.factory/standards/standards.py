@@ -1,28 +1,37 @@
 """Software Factory standards packs (E11, ADRs 0033 to 0035). Standard library only.
 
     python .factory/standards/standards.py [--root PATH] check
+    python .factory/standards/standards.py [--root PATH] select [--base-ref REF | FILE ...] [--json]
 
 A pack is `.factory/standards/<name>/rules.md`: TOML front matter between `+++` lines (name,
 title, rule-id prefix, the globs it applies to, optional detect markers and packs it replaces,
 and its sources with their licences), then a `# <title>` heading, a `## Left to the tools`
 section and a `## Rules` section holding one table: Rule id | Severity | Rule | Why/example |
 Source. This module reads and validates every installed pack and the `[standards]` table of
-`.agentic/config.toml`. It imports nothing from the kit, so `state.py` and the gate can load it
-by path without an import cycle (ADR 0033).
+`.agentic/config.toml`, lists the packs and rules in force for a change (`select`, ADR 0035),
+and tells `state.py` whether a cited rule is in force (`rule_in_force`, ADR 0034). It imports
+nothing from the kit, so `state.py` and the gate can load it by path without an import cycle
+(ADR 0033); only `select --base-ref` loads the repo's `gate.py`, for its changed files.
 """
 
 from __future__ import annotations
 
 import argparse
+import importlib.util
+import json
 import re
 import sys
 import tomllib
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from pathlib import Path
+from fnmatch import fnmatchcase
+from pathlib import Path, PurePosixPath
+from types import ModuleType
 
 STANDARDS_REL = ".factory/standards"
 CONFIG_REL = ".agentic/config.toml"
+GATE_REL = ".factory/gates/gate.py"
+DEFAULT_BASE_REF = "main"  # the gate's own default for gates.base_ref
 FENCE = "+++"
 FRONT = "front matter"
 BODY = "body"
@@ -487,6 +496,169 @@ def validate(root: Path) -> list[Problem]:
     return sorted(found, key=_order)
 
 
+# --- choosing the rules for a change (ADR 0035) ------------------------------------------------
+
+
+@dataclass(frozen=True)
+class Selected:
+    """A pack that applies to a change: the files it matched, and its rules in force."""
+
+    pack: Pack
+    files: list[str]
+    rules: list[Rule]
+
+
+def _posix(path: str) -> str:
+    return PurePosixPath(path.replace("\\", "/")).as_posix()
+
+
+def _detected(root: Path, pack: Pack) -> bool:
+    """Whether each `detect` marker matches a file at the repo root."""
+    if not pack.detect:
+        return True
+    names = [p.name for p in root.iterdir() if p.is_file()] if root.is_dir() else []
+    return all(any(fnmatchcase(name, marker) for name in names) for marker in pack.detect)
+
+
+def _in_force(pack: Pack, config: Config) -> list[Rule]:
+    return [r for r in pack.rules if r.severity != "retired" and r.id not in config.ignore]
+
+
+def select(root: Path, files: Sequence[str]) -> list[Selected]:
+    """The packs that apply to `files` (repo-relative paths), in name order (spec AC-08)."""
+    paths = sorted({_posix(f) for f in files})
+    config, _ = read_config(root)
+    matched: dict[str, tuple[Pack, list[str]]] = {}
+    for pack in load(root).packs:
+        hits = [p for p in paths if any(fnmatchcase(p, g) for g in pack.applies_to)]
+        if hits and config.packs.get(pack.name, True) and _detected(root, pack):
+            matched[pack.name] = (pack, hits)
+    # One pass (ADR 0035): a pack that is itself replaced can't replace others.
+    candidates = {other for pack, _ in matched.values() for other in pack.replaces}
+    replaced = {
+        other
+        for name, (pack, _) in matched.items()
+        if name not in candidates
+        for other in pack.replaces
+    }
+    return [
+        Selected(pack, hits, _in_force(pack, config))
+        for name, (pack, hits) in sorted(matched.items())
+        if name not in replaced
+    ]
+
+
+def rule_in_force(root: Path, rule_id: str) -> str | None:
+    """Why `rule_id` can't be cited, or None when it is in force (spec AC-12, ADR 0034)."""
+    config, _ = read_config(root)
+    for pack in load(root).packs:
+        for rule in pack.rules:
+            if rule.id != rule_id:
+                continue
+            if rule.severity == "retired":
+                return f"is retired in the {pack.name} pack"
+            if rule_id in config.ignore:
+                return "is switched off in [standards].ignore"
+            if not config.packs.get(pack.name, True):
+                return f"belongs to the {pack.name} pack, switched off in [standards].packs"
+            return None
+    return "is not a rule in an installed pack"
+
+
+class UsageError(Exception):
+    """`select` can't work out the changed files: exit 2."""
+
+
+def _load_gate(root: Path) -> ModuleType:
+    path = root / GATE_REL
+    spec = importlib.util.spec_from_file_location("factory_standards_gate", path)
+    if not path.is_file() or spec is None or spec.loader is None:
+        raise UsageError(f"no {GATE_REL} to find the changed files; name the files (FILE ...)")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module  # dataclasses look the module up by name
+    written = sys.dont_write_bytecode
+    sys.dont_write_bytecode = True  # no __pycache__ to show up as a changed file
+    try:
+        spec.loader.exec_module(module)
+    finally:
+        sys.dont_write_bytecode = written
+    return module
+
+
+def _base_ref(root: Path) -> str:
+    """`gates.base_ref` from the config, or the gate's default."""
+    try:
+        data = tomllib.loads((root / CONFIG_REL).read_bytes().decode("utf-8"))
+    except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError):
+        return DEFAULT_BASE_REF
+    gates = data.get("gates", {})
+    ref = gates.get("base_ref") if isinstance(gates, dict) else None
+    return ref if isinstance(ref, str) and ref.strip() else DEFAULT_BASE_REF
+
+
+def changed_files(root: Path, base_ref: str | None) -> list[str]:
+    """The files the gate counts as changed since the merge base of `base_ref` and HEAD."""
+    gate = _load_gate(root)
+    try:
+        return list(gate.changed_files(root, base_ref or _base_ref(root)))
+    except gate.BaseRefError as exc:
+        raise UsageError(str(exc)) from None
+
+
+def _emit(text: str) -> None:
+    """UTF-8 with LF line endings on every OS and in any locale."""
+    buffer = getattr(sys.stdout, "buffer", None)
+    if buffer is None:
+        sys.stdout.write(text)
+        return
+    sys.stdout.flush()
+    buffer.write(text.encode("utf-8"))
+    buffer.flush()
+
+
+def render(selected: list[Selected], files: Sequence[str]) -> str:
+    if not selected:
+        return (
+            "no packs apply to these files\n" if files else "no changed files, so no packs apply\n"
+        )
+    blocks = []
+    for item in selected:
+        count = len(item.files)
+        lines = [
+            f"{item.pack.name} ({item.pack.title}): {count} file{'s' if count != 1 else ''}",
+            f"  files: {', '.join(item.files)}",
+        ]
+        lines += [f"  {r.id} [{r.severity}] {r.text}" for r in item.rules]
+        blocks.append("\n".join(lines) + "\n")
+    return "\n".join(blocks)
+
+
+def as_json(selected: list[Selected]) -> str:
+    packs = [
+        {
+            "name": item.pack.name,
+            "title": item.pack.title,
+            "files": item.files,
+            "rules": [{"id": r.id, "severity": r.severity, "rule": r.text} for r in item.rules],
+        }
+        for item in selected
+    ]
+    return json.dumps({"packs": packs}, indent=2, ensure_ascii=False) + "\n"
+
+
+def _select(root: Path, args: argparse.Namespace) -> int:
+    if args.files and args.base_ref is not None:
+        args.parser.error("give --base-ref or FILE ..., not both")
+    try:
+        files = list(args.files) if args.files else changed_files(root, args.base_ref)
+    except UsageError as exc:
+        print(f"standards.py: {exc}", file=sys.stderr)
+        return 2
+    selected = select(root, files)
+    _emit(as_json(selected) if args.json else render(selected, files))
+    return 0
+
+
 # --- command line -------------------------------------------------------------------------------
 
 
@@ -519,9 +691,16 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("check", help="validate the installed packs and the [standards] config")
+    chooser = commands.add_parser("select", help="list the packs and rules in force for a change")
+    chooser.add_argument(
+        "--base-ref", help="the files changed since its merge base (default: gates.base_ref)"
+    )
+    chooser.add_argument("--json", action="store_true", help="print it as JSON")
+    chooser.add_argument("files", nargs="*", metavar="FILE", help="repo-relative paths")
+    chooser.set_defaults(parser=chooser)
     args = parser.parse_args(argv)
     root = Path(args.root).resolve() if args.root else find_root(Path.cwd())
-    return _check(root)
+    return _select(root, args) if args.command == "select" else _check(root)
 
 
 if __name__ == "__main__":
