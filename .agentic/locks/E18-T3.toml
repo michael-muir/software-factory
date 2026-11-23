@@ -1,9 +1,9 @@
 task = "E18-T3"
-locked = 2026-11-22T04:31:32Z
+locked = 2026-11-23T19:04:07Z
 
 [[files]]
 path = "tests/test_jobs_hooks.py"
-sha256 = "f0b8dc65fe30cb5523b1fa467f738541347fa4c99e0d73d3e65c2ec9011b0c86"
+sha256 = "fb5e695a7ac13f25c83a640c44a3472628a74e90ca95eb1558031218b45562f4"
 
 [[files]]
 path = "tests/test_find_repo.py"

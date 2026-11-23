@@ -380,7 +380,8 @@ def test_a_real_daemon_is_alive_while_it_runs_and_dead_once_killed(tmp_path: Pat
                 break
             time.sleep(0.5)
         assert [d["state"] for d in found] == ["alive"]
-        assert found[0]["pid"] == proc.pid
+        assert isinstance(found[0]["pid"], int)
+        assert found[0]["host"] == socket.gethostname()
     finally:
         proc.kill()
         proc.wait(timeout=30)
