@@ -55,6 +55,16 @@ REVIEWER_LIMIT = [
     for python in ("python", "python3", "py", "uv run python")
 ] + ["git diff", "git log", "git show", "git status"]
 LIMITED = ("verifier", "spec-reviewer", "standards-reviewer", "security-reviewer", "perf-reviewer")
+# E11 AC-14: the Standards Reviewer also runs standards.py, to list the rules in force (relock of
+# E09-T2 approved by the product owner).
+STANDARDS_REVIEWER_LIMIT = (
+    REVIEWER_LIMIT[:8]
+    + [
+        f"{python} .factory/standards/standards.py"
+        for python in ("python", "python3", "py", "uv run python")
+    ]
+    + REVIEWER_LIMIT[8:]
+)
 
 
 @dataclass(frozen=True)
@@ -197,7 +207,8 @@ def test_every_roles_tools_are_exactly_the_tables(name: str) -> None:
 @pytest.mark.parametrize("name", LIMITED)
 def test_the_verifier_and_reviewers_have_exactly_the_reviewer_limit(name: str) -> None:
     data, _ = card(name)
-    assert data["scope"] == {"run": REVIEWER_LIMIT}
+    limit = STANDARDS_REVIEWER_LIMIT if name == "standards-reviewer" else REVIEWER_LIMIT
+    assert data["scope"] == {"run": limit}
 
 
 @pytest.mark.ac("E09-AC-03")

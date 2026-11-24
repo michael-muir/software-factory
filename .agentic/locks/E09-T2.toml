@@ -1,6 +1,6 @@
 task = "E09-T2"
-locked = 2026-11-19T18:44:23Z
+locked = 2026-11-23T20:12:25Z
 
 [[files]]
 path = "tests/test_core_roles_prove.py"
-sha256 = "85f353a09cf6cb9c89e35fe8334fac5af364724a383088392c00264c9fe84a9e"
+sha256 = "043feaf4abca3af2fc5ab60c737b34271c3e50b5ef01727b1e12f5c2390eeceb"
