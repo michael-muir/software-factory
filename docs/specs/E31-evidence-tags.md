@@ -1,7 +1,7 @@
 # E31 · Evidence tags bind only real markers — Spec
 
 Issue: [#82](https://github.com/michael-muir/software-factory/issues/82) · Milestone: M1 · Manual factory (alpha) · Depends on: E08 (done)
-Status: **Draft, awaiting product owner approval** · Next: Architect design note and ADRs, then failing tests per AC
+Status: **Approved by michael-muir, 24 Nov 2026** · Next: Architect design note and ADRs, then failing tests per AC
 
 ## Goal
 
