@@ -143,6 +143,7 @@ def test_session_argv_fills_each_placeholder_element() -> None:
         "none",
         "--allowedTools",
         "Read,Glob",
+        "--",
         "Check it.",
     ]
 
