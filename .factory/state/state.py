@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import importlib.util
 import json
 import os
 import re
@@ -43,6 +44,8 @@ FINDING_STATUSES = ("open", "fixed", "wont-fix")
 TASK_HEADINGS = ("## Goal", "## Acceptance criteria", "## Notes")
 HANDOFF_HEADINGS = ("## Done", "## Next", "## Open questions")
 FINDING_ID = re.compile(r"F[1-9][0-9]*")
+RULE_ID = re.compile(r"[A-Z]{2,5}-\d{3}")  # a standards pack's rule id (E11, ADR 0034)
+STANDARDS_MODULE = ".factory/standards/standards.py"
 
 
 @dataclass(frozen=True)
@@ -95,6 +98,12 @@ def _finding_id(value: object) -> str | None:
     return "must be F1, F2, ..."
 
 
+def _rule_id(value: object) -> str | None:
+    if isinstance(value, str) and RULE_ID.fullmatch(value):
+        return None
+    return "must be a rule id: 2 to 5 capital letters, a dash and 3 digits (PY-001)"
+
+
 Schema = dict[str, Callable[[object], str | None]]
 
 STATE_SCHEMA: Schema = {
@@ -115,6 +124,7 @@ TASK_SCHEMA: Schema = {
 FINDING_SCHEMA: Schema = {
     "id": _finding_id,
     "severity": _one_of(SEVERITIES),
+    "rule": _rule_id,  # optional: the standards rule a finding cites (E11)
     "status": _one_of(FINDING_STATUSES),
     "summary": _str,
 }
@@ -199,7 +209,7 @@ def _check_findings(rel: str, value: object) -> list[Problem]:
     found: list[Problem] = []
     seen: set[object] = set()
     for index, finding in enumerate(value):
-        found += check_fields(rel, finding, FINDING_SCHEMA, f"findings[{index}].")
+        found += check_fields(rel, finding, FINDING_SCHEMA, f"findings[{index}].", {"rule"})
         finding_id = finding.get("id")
         if finding_id in seen:
             found.append(Problem(rel, "findings", f"duplicate finding id {finding_id}"))
@@ -341,7 +351,7 @@ def emit(data: dict[str, object], schema: Schema) -> str:
     findings = data.get("findings", [])
     for finding in findings if isinstance(findings, list) else []:
         lines += ["", "[[findings]]"]
-        lines += [f"{key} = {toml_value(finding[key])}" for key in FINDING_SCHEMA]
+        lines += [f"{key} = {toml_value(finding[key])}" for key in FINDING_SCHEMA if key in finding]
     return f"{FENCE}\n" + "\n".join(lines) + f"\n{FENCE}\n"
 
 
@@ -462,16 +472,33 @@ def _findings_of(data: dict[str, object]) -> list[dict[str, object]]:
     return value if isinstance(value, list) else []
 
 
+def _check_rule(root: Path, rule: str) -> None:
+    """Refuse a cited rule that isn't in force in the repo's packs (E11 AC-12, ADR 0034)."""
+    path = root / STANDARDS_MODULE
+    spec = importlib.util.spec_from_file_location("factory_standards", path)
+    if not path.is_file() or spec is None or spec.loader is None:
+        raise Refused(f"can't cite rule {rule}: no standards packs installed ({STANDARDS_MODULE})")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module  # dataclasses look the module up by name
+    spec.loader.exec_module(module)
+    why = module.rule_in_force(root, rule)
+    if why is not None:
+        raise Refused(f"rule {rule} {why}")
+
+
 def _finding_add(root: Path, args: argparse.Namespace) -> int:
     _require_valid(root)
     path = _task_path(root, args.id)
+    if args.rule is not None:
+        _check_rule(root, args.rule)
     data, body = _read(path)
     findings = _findings_of(data)
     numbers = [int(str(f["id"])[1:]) for f in findings]
     finding_id = f"F{max(numbers, default=0) + 1}"
-    findings.append(
-        {"id": finding_id, "severity": args.severity, "status": "open", "summary": args.summary}
-    )
+    finding: dict[str, object] = {"id": finding_id, "severity": args.severity}
+    if args.rule is not None:
+        finding["rule"] = args.rule
+    findings.append({**finding, "status": "open", "summary": args.summary})
     data["findings"] = findings
     _save_task(path, data, body)
     print(f"added {finding_id} to {_rel(path, root)}")
@@ -644,6 +671,12 @@ def resume(root: Path) -> dict[str, object]:
     return result
 
 
+def _cited(finding: dict[str, object]) -> str:
+    """`PY-002 ` for a finding that cites a rule, else nothing (E11 AC-13)."""
+    rule = finding.get("rule")
+    return f"{rule} " if rule else ""
+
+
 def _section(title: str) -> str:
     return f"--- {title} " + "-" * max(3, 72 - len(title))
 
@@ -672,7 +705,8 @@ def render(data: dict[str, object]) -> str:
         "Open findings:",
     ]
     findings = task["open_findings"]
-    lines += [f"  {f['id']} [{f['severity']}] {f['summary']}" for f in findings] or ["  (none)"]
+    shown = [f"  {f['id']} [{f['severity']}] {_cited(f)}{f['summary']}" for f in findings]
+    lines += shown or ["  (none)"]
     lines += [_section("task notes"), task["body"].strip("\n")]
     handoff = data["handoff"]
     if isinstance(handoff, dict):
@@ -728,6 +762,7 @@ def _parser() -> argparse.ArgumentParser:
     add = finding.add_parser("add", help="add an open finding to a task")
     add.add_argument("id")
     add.add_argument("--severity", choices=SEVERITIES, required=True)
+    add.add_argument("--rule", help="the standards rule id it cites; must be in force (PY-001)")
     add.add_argument("summary")
     add.set_defaults(run=_finding_add)
     fset = finding.add_parser("set", help="change a finding's status")

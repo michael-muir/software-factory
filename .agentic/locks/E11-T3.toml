@@ -1,0 +1,6 @@
+task = "E11-T3"
+locked = 2026-11-23T19:57:44Z
+
+[[files]]
+path = "tests/test_standards_citing.py"
+sha256 = "ec52c3e422b1af9f9d084179fe50d4edff2cc821e2e79d641ad5c85859ddb95c"
