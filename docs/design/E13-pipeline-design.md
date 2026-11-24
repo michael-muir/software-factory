@@ -295,6 +295,10 @@ Each slice ships on its own:
   - `gate-report.json` in the scratch folder hands the newest gate report to the Debugger and the Integrator, as `$FACTORY_GATE_REPORT`, even in a new segment's worktree.
   - The GitHub forge reads origin's configured URL (`git config remote.origin.url`), not `git remote get-url`, so an `insteadOf` rewrite doesn't hide which repository it is.
   - A gate report's failing checks are named from each check's `profile` and `check`, as `gate.py --json-out` writes them. The stage check read a `name` key, which real reports don't have.
+- **23 Nov 2026, while building T4 (the product owner's decision of the same day):**
+  - After the session of a role without a shell, the driver commits what it left in the tree, with `pipeline.py _commit "docs(<EPIC>): <stage> from the <role>" -- .`. This covers the spec-writer and the architect, which can't commit. A tree still dirty after that commit stops the job for a human. A failed session's files are never committed.
+  - `has_shell(root, role)` reads the role's card: `run` with no `[scope].run` is a shell. The reviewers' scoped `run` isn't one, so their findings are still committed as before.
+  - The done-when test, `tests/test_pipeline_end_to_end.py`, installs the kit with `install.py` into its temp repo and runs the installed `pipeline.py` and `run.py --daemon` as commands.
 
 ## Risks
 

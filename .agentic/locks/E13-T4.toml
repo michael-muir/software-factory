@@ -1,0 +1,14 @@
+task = "E13-T4"
+locked = 2026-11-24T00:00:53Z
+
+[[files]]
+path = "tests/test_pipeline_coverage.py"
+sha256 = "12eebca6bc1bb1c0d517e5658476a1a7305fe99eebe8bf01e27daff322946289"
+
+[[files]]
+path = "tests/test_pipeline_end_to_end.py"
+sha256 = "29e62e42fa78904d406489624692aedc76d51d8d95c06474569153040d531190"
+
+[[files]]
+path = "tests/test_pipeline_plan_commits.py"
+sha256 = "b6a41f40a46b05fab0d3d69d69ecf544954d6e7df663d7e5f2cb311bc524a36f"

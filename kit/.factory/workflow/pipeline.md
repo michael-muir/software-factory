@@ -28,8 +28,9 @@ A job on the full track goes through nine stages. Each stage is done by the role
 
 ## What the driver does itself
 
-Some steps are commands the driver sends on the slice's runner job, not role sessions:
+Some steps are commands the driver sends on the runner job, not role sessions:
 
+- **Plan commits:** the `spec-writer` and the `architect` have no shell, so after each of their sessions the driver commits whatever they left in the tree (`docs(<epic>): spec from the spec-writer`). A role with a shell commits its own work, and a failed session's files are never committed.
 - **The gate:** `gates.python_command` with `.factory/gates/gate.py --json-out <scratch>/gate-<n>.json`. The driver keeps each report in the record. On a red report it sends the `debugger`, with the report as `$FACTORY_GATE_REPORT`, then runs the gate again, up to `pipeline.gate_retries` times. If it's still red, the job stops for a human with the failing checks.
 - **Findings commits:** the reviewers can't commit, so after each review session the driver commits the task file, if it changed (`chore(<task>): review findings from <role>`). After the sixth, it sets the task's review round to 1 with `state.py task set <task> --round 1`, and commits that too. An open blocker or major finding then stops the job, and the reason lists the findings. Minor ones go on to the PR body.
 - **The docs commit:** the `docs-writer` has no shell, so the driver commits what it changed (`docs(<task>): changelog entry from the docs-writer`), then runs the full gate again on the new head. The ship stage uses that report.

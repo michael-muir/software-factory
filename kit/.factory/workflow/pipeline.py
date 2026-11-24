@@ -678,6 +678,15 @@ def role_allowed_tools(root: Path, role: str) -> str:
     return allowed_tools([str(t) for t in data.get("tools", [])], [str(p) for p in run])
 
 
+def has_shell(root: Path, role: str) -> bool:
+    """Whether the role can run any command, so can commit its own work: `run` in its card's
+    tools with no `[scope].run` prefixes."""
+    data = _role_card(root, role)
+    scope = data.get("scope", {})
+    run = scope.get("run", []) if isinstance(scope, dict) else []
+    return "run" in [str(t) for t in data.get("tools", [])] and not run
+
+
 def session_argv(template: Sequence[str], role: str, allowed: str, prompt: str) -> list[str]:
     """The agent command: each whole-element placeholder filled in, so a prompt stays one arg."""
     values = {"{role}": role, "{allowed_tools}": allowed, "{prompt}": prompt}
@@ -1315,6 +1324,9 @@ class Driver:
         sessions = self._sessions(current.name, task)
         plan = SLICE_PLANS.get(current.name)
         if plan is None:
+            left = self._leftovers(current, task, sessions)
+            if left is not None:
+                return left
             done = {s["role"] for s in sessions if s.get("exit_code") == 0}
             pending = [role for role in current.roles if role not in done]
             if pending:
@@ -1658,6 +1670,26 @@ class Driver:
 
     def _commit_argv(self, message: str, paths: Sequence[str]) -> list[str]:
         return [sys.executable, str(Path(__file__).resolve()), "_commit", message, "--", *paths]
+
+    def _leftovers(self, current: Stage, task: str, sessions: list[dict[str, Any]]) -> int | None:
+        """Commit what a role without a shell left in the tree (the product owner's decision of
+        23 Nov 2026), once, right after its session. None when there's nothing to commit."""
+        if not sessions:
+            return None
+        last = sessions[-1]
+        role = str(last["role"])
+        if role in DRIVER_ROLES and role != "commit":
+            return None
+        if role != "commit" and (last.get("exit_code") != 0 or has_shell(self.job.root, role)):
+            return None
+        run = self._open_run(task)
+        if run is None or not _dirty(Path(run["worktree"])):
+            return None
+        if role == "commit":
+            return self._stop(f"{current.name}: the tree is still dirty after the driver's commit")
+        scope = self.rec["epic"] if current.scope == "plan" else task
+        message = f"docs({scope}): {current.name} from the {role}"
+        return self._command(current, task, run, "commit", self._commit_argv(message, ["."]))
 
     def _gate_command(self, current: Stage, task: str, run: dict[str, Any]) -> int:
         """The full gate, as a runner command, with its JSON report in the scratch folder."""
@@ -2411,7 +2443,8 @@ def _env(argv: Sequence[str]) -> int:
 
 def _commit(argv: Sequence[str]) -> int:
     """`_commit MESSAGE -- PATH...`: commit what changed under the paths, if anything did. The
-    driver sends it for roles that can't commit (the reviewers' findings, the docs-writer)."""
+    driver sends it for roles that can't commit (the spec-writer, the architect, the reviewers'
+    findings, the docs-writer)."""
     if len(argv) < 3 or argv[1] != "--":
         raise BadInput("_commit needs a message, then -- and the paths")
     message, paths = argv[0], list(argv[2:])
