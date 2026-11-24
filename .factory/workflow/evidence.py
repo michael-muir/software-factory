@@ -16,10 +16,12 @@ from __future__ import annotations
 
 import argparse
 import importlib.util
+import io
 import json
 import re
 import subprocess
 import sys
+import tokenize
 import tomllib
 from collections.abc import Sequence
 from dataclasses import dataclass, field
@@ -82,14 +84,109 @@ class Traced:
     acs: dict[str, list[str]] = field(default_factory=dict)
 
 
-def trace_file(path: str, text: str, epic: str) -> Traced:
-    """Bind each `<EPIC>-AC-nn` tag to the next test definition in the file (ADR 0025).
+def _python_markers(text: str) -> tuple[int, list[tuple[str, str | None]]] | None:
+    """(test count, [(marker text, bound test or None)]) from Python tokens (ADR 0054).
 
-    A tag inside a definition, such as a TS test's title, binds to that definition. A tag with no
+    Markers are comments (bound to the next test), `@pytest.mark.ac(...)` string arguments
+    (bound to the decorated test) and a test's docstring (bound to that test). None when the
+    source doesn't tokenize.
+    """
+    try:
+        tokens = [
+            t
+            for t in tokenize.generate_tokens(io.StringIO(text).readline)
+            if t.type not in (tokenize.NL, tokenize.ENCODING)
+        ]
+    except (tokenize.TokenError, SyntaxError):
+        return None
+    tests: list[tuple[int, str]] = []  # (token index of the name, name)
+    for i, tok in enumerate(tokens):
+        prev = tokens[i - 1] if i else None
+        if (
+            tok.type == tokenize.NAME
+            and tok.string.startswith("test_")
+            and prev is not None
+            and prev.type == tokenize.NAME
+            and prev.string == "def"
+        ):
+            tests.append((i, tok.string))
+
+    def next_test(index: int) -> str | None:
+        return next((name for at, name in tests if at > index), None)
+
+    markers: list[tuple[str, str | None]] = []
+    i = 0
+    while i < len(tokens):
+        tok = tokens[i]
+        if tok.type == tokenize.COMMENT:
+            markers.append((tok.string, next_test(i)))
+        elif tok.type == tokenize.OP and tok.string == "@":
+            names: list[str] = []
+            j = i + 1
+            while j < len(tokens) and (tokens[j].type == tokenize.NAME or tokens[j].string == "."):
+                if tokens[j].string != ".":
+                    names.append(tokens[j].string)
+                j += 1
+            if names[-2:] == ["mark", "ac"] and j < len(tokens) and tokens[j].string == "(":
+                depth, k = 0, j
+                while k < len(tokens):
+                    if tokens[k].string in "([{" and tokens[k].type == tokenize.OP:
+                        depth += 1
+                    elif tokens[k].string in ")]}" and tokens[k].type == tokenize.OP:
+                        depth -= 1
+                        if depth == 0:
+                            break
+                    elif tokens[k].type == tokenize.STRING:
+                        markers.append((tokens[k].string, next_test(k)))
+                    k += 1
+                i = k
+        i += 1
+    for at, name in tests:
+        # def NAME ( ... ) [-> ...] : NEWLINE INDENT STRING
+        k = at + 1
+        depth = 0
+        while k < len(tokens):
+            s = tokens[k]
+            if s.type == tokenize.OP and s.string in "([{":
+                depth += 1
+            elif s.type == tokenize.OP and s.string in ")]}":
+                depth -= 1
+            elif s.type == tokenize.OP and s.string == ":" and depth == 0:
+                break
+            k += 1
+        body = tokens[k + 1 : k + 4]
+        kinds = [t.type for t in body]
+        if kinds[:3] == [tokenize.NEWLINE, tokenize.INDENT, tokenize.STRING]:
+            markers.append((body[2].string, name))
+        elif kinds[:1] == [tokenize.STRING]:  # def test_x(): "doc"
+            markers.append((body[0].string, name))
+    return len(tests), markers
+
+
+def trace_file(path: str, text: str, epic: str) -> Traced:
+    """Bind each `<EPIC>-AC-nn` tag found in a marker to its test (ADR 0054).
+
+    Python is read with `tokenize`: comments bind to the next test, `@pytest.mark.ac(...)` to the
+    decorated test and a docstring to its test; tags in other strings are ignored. A tag with no
     test after it, or in a stack with no known form, is listed under the file alone.
     """
     tag = re.compile(rf"(?<![\w-]){re.escape(epic)}-(AC-\d\d[a-z]?)(?![\w-])")
-    stack = STACKS.get(Path(path).suffix.lower())
+    suffix = Path(path).suffix.lower()
+    if suffix == ".py":
+        read = _python_markers(text)
+        if read is None:  # doesn't tokenize: tags under the file alone
+            traced = Traced(path)
+            for match in tag.finditer(text):
+                traced.acs.setdefault(match.group(1), [])
+            return traced
+        traced = Traced(path, tests=read[0])
+        for marker, bound in read[1]:
+            for match in tag.finditer(marker):
+                names = traced.acs.setdefault(match.group(1), [])
+                if bound is not None and bound not in names:
+                    names.append(bound)
+        return traced
+    stack = STACKS.get(suffix)
     found = [] if stack is None else [(m.end(), m.group(stack[1])) for m in stack[0].finditer(text)]
     traced = Traced(path, tests=len(found))
     for match in tag.finditer(text):
