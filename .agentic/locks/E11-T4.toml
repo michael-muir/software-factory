@@ -1,0 +1,6 @@
+task = "E11-T4"
+locked = 2026-11-24T00:05:24Z
+
+[[files]]
+path = "tests/test_standards_done_when.py"
+sha256 = "1f77b0b1b38725b86e35e093c16dc9936f7b2d899b8a1b766602fadf05ddbcd5"
