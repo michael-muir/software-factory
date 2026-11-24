@@ -1,3 +1,5 @@
+"""greet keeps each name as it was typed."""
+
 from greet import greet
 
 
