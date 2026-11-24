@@ -754,6 +754,7 @@ PIPELINE_DEFAULTS: dict[str, Any] = {
         "none",
         "--allowedTools",
         "{allowed_tools}",
+        "--",
         "{prompt}",
     ],
     "forge": "github",

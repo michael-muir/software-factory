@@ -31,6 +31,7 @@ DEFAULT_COMMAND = [
     "none",
     "--allowedTools",
     "{allowed_tools}",
+    "--",
     "{prompt}",
 ]
 VERIFIER_PREFIXES = [
@@ -142,6 +143,7 @@ def test_session_argv_fills_each_placeholder_element() -> None:
         "none",
         "--allowedTools",
         "Read,Glob",
+        "--",
         "Check it.",
     ]
 

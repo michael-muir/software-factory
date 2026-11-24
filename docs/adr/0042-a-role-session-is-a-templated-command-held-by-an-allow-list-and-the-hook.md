@@ -16,10 +16,10 @@ Each stage's role runs headless, with no person there to answer permission promp
 - **The command is `pipeline.agent_command`,** a list with three placeholders, each a whole element: `{role}`, `{allowed_tools}` and `{prompt}`. The default is:
 
   ```text
-  claude -p --agent {role} --output-format json --permission-mode acceptEdits --permission-prompts none --allowedTools {allowed_tools} {prompt}
+  claude -p --agent {role} --output-format json --permission-mode acceptEdits --permission-prompts none --allowedTools {allowed_tools} -- {prompt}
   ```
 
-  A prompt is always one argument, whatever it holds.
+  A prompt is always one argument, whatever it holds. The `--` ends the options, so an option that takes any number of values, like Claude Code's `--allowedTools`, can't read the prompt as one of them (added 24 Nov 2026, E13-T5, after the live run).
 
 - **The allow-list is generated from the role's card,** through E12's Claude Code tool names (`agents.CLAUDE_CODE_AGENT_TOOLS`).
   - A role with `run` and no `[scope].run` gets `Bash` and `PowerShell`.

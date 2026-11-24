@@ -140,6 +140,7 @@ AGENT_COMMAND = (  # mirrors pipeline.PIPELINE_DEFAULTS["agent_command"] (E13, A
     "none",
     "--allowedTools",
     "{allowed_tools}",
+    "--",
     "{prompt}",
 )
 _PLACEHOLDER = re.compile(r"\{[^{}]*\}")
