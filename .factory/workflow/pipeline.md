@@ -67,7 +67,7 @@ Exit codes: 0 done (or the check passed), 1 refused (a check failed, or a checkp
 Each role runs headless, as `pipeline.agent_command` with its placeholders filled in. The default is Claude Code:
 
 ```text
-claude -p --agent {role} --output-format json --permission-mode acceptEdits --permission-prompts none --allowedTools {allowed_tools} {prompt}
+claude -p --agent {role} --output-format json --permission-mode acceptEdits --permission-prompts none --allowedTools {allowed_tools} -- {prompt}
 ```
 
 Three layers hold a session, outermost first (ADR 0042):
