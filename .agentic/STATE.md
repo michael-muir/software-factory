@@ -1,9 +1,9 @@
 +++
 phase = "test"
 track = "full"
-active_task = "E11-T3"
+active_task = "E11-T4"
 blockers = []
-updated = 2026-11-23T19:51:55Z
+updated = 2026-11-24T00:03:18Z
 +++
 
 E12 (#12): spec approved, design note and ADRs 0023-0024 accepted. Built in three slices, E12-T1 to E12-T3. Resume with `python .factory/state/state.py resume`.

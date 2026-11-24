@@ -1,0 +1,33 @@
+diff --git a/src/greet.py b/src/greet.py
+new file mode 100644
+index 0000000..2cd7cd0
+--- /dev/null
++++ b/src/greet.py
+@@ -0,0 +1,10 @@
++"""Greetings for people, by name."""
++
++
++def greet(name: str) -> str:
++    """Return a greeting for `name`, keeping its case as typed."""
++    return f"Hello, {name}!"
++
++
++def greet_list(str_list: list[str]) -> list[str]:
++    return [greet(item) for item in str_list]
+diff --git a/tests/test_greet.py b/tests/test_greet.py
+new file mode 100644
+index 0000000..d543a28
+--- /dev/null
++++ b/tests/test_greet.py
+@@ -0,0 +1,11 @@
++"""greet keeps each name as it was typed."""
++
++from greet import greet
++
++
++def test_greets_by_name() -> None:
++    assert greet("Ada") == "Hello, Ada!"
++
++
++def test_keeps_the_names_case() -> None:
++    assert greet("McDonald") == "Hello, McDonald!"
