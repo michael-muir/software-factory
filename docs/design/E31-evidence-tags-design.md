@@ -1,7 +1,7 @@
 # E31 · Evidence tags bind only real markers design note
 
 Spec: [E31 spec](../specs/E31-evidence-tags.md) · Issue: [#82](https://github.com/michael-muir/software-factory/issues/82)
-Status: **Proposed, awaiting product owner acceptance** · ADRs: [0054](../adr/0054-evidence-tags-bind-only-real-markers-read-with-a-lexer.md)
+Status: **Accepted by michael-muir, 24 Nov 2026** · ADRs: [0054](../adr/0054-evidence-tags-bind-only-real-markers-read-with-a-lexer.md)
 
 ## Summary
 
