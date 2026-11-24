@@ -82,7 +82,7 @@ def plan_turns(tasks: Mapping[str, str], *, revised: bool = False) -> dict[str, 
 def _set_key(text: str, key: str, value: object) -> str:
     """Set one `key = value` line of the installed config, keeping its section."""
     new, count = re.subn(
-        rf"(?m)^{re.escape(key)} = .*$", f"{key} = {json.dumps(value)}", text, count=1
+        rf"(?m)^{re.escape(key)} = .*$", lambda _m: f"{key} = {json.dumps(value)}", text, count=1
     )
     assert count == 1, f"the installed config has no {key} line"
     return new
