@@ -31,6 +31,7 @@ DEFAULT_COMMAND = [
     "none",
     "--allowedTools",
     "{allowed_tools}",
+    "--",
     "{prompt}",
 ]
 VERIFIER_PREFIXES = [

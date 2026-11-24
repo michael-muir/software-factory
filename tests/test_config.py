@@ -53,6 +53,7 @@ SPEC_DEFAULTS = {
             "none",
             "--allowedTools",
             "{allowed_tools}",
+            "--",
             "{prompt}",
         ],
         "forge": "github",
