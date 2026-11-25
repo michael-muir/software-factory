@@ -188,7 +188,8 @@ AGENT_SCHEMA = {
     "tools": _tools,
     "scope": _table,
 }
-LOCK_SCHEMA = {"task": _task_id, "locked": _utc, "files": _files}
+LOCK_SCHEMA = {"task": _task_id, "locked": _utc, "approved_by": _text, "files": _files}
+LOCK_OPTIONAL = ("approved_by",)  # who approved a relock, when one did
 LOCKED_FILE_SCHEMA = {"path": _rel_path, "sha256": _sha256}
 
 
@@ -303,7 +304,7 @@ def _check_locks(root: Path, checked: Checked) -> None:
         except tomllib.TOMLDecodeError as exc:
             checked.problems.append(state.Problem(rel, "toml", f"invalid TOML: {exc}"))
             continue
-        found = state.check_fields(rel, data, LOCK_SCHEMA)
+        found = state.check_fields(rel, data, LOCK_SCHEMA, optional=LOCK_OPTIONAL)
         if _task_id(data.get("task")) is None:
             if data["task"] != task:
                 found.append(
@@ -497,13 +498,22 @@ def verify_locks(root: Path) -> list[str]:
 # --- lock and unlock (spec AC-09) -----------------------------------------------------------------
 
 
-def lock(root: Path, task: str, paths: Sequence[Path], *, replace: bool = False) -> Path:
-    """Write `.agentic/locks/<task>.toml` for `paths`."""
+def lock(
+    root: Path,
+    task: str,
+    paths: Sequence[Path],
+    *,
+    replace: bool = False,
+    approved_by: str | None = None,
+) -> Path:
+    """Write `.agentic/locks/<task>.toml` for `paths`, with who approved a relock if given."""
     if _task_id(task) is not None or not (root / state.TASKS_REL / f"{task}.md").is_file():
         raise Refused(f"no task {task!r} in {state.TASKS_REL}/")
     record = root / LOCKS_REL / f"{task}.toml"
     if record.exists() and not replace:
         raise Refused(f"{task} is already locked; use --replace to lock it again")
+    if approved_by is not None and not approved_by.strip():
+        raise Refused("--approved-by needs a name")
     checked = validate(root)
     if checked:
         raise Refused("invalid lock records:\n" + "\n".join(map(str, checked)))
@@ -520,6 +530,8 @@ def lock(root: Path, task: str, paths: Sequence[Path], *, replace: bool = False)
         files[rel] = lf_sha256((root / rel).read_bytes())
     now = dt.datetime.now(dt.UTC).replace(microsecond=0)
     lines = [f"task = {state.toml_value(task)}", f"locked = {state.toml_value(now)}"]
+    if approved_by is not None:
+        lines.append(f"approved_by = {state.toml_value(approved_by.strip())}")
     for rel, sha in files.items():
         lines += [
             "",
@@ -864,7 +876,13 @@ def _check(root: Path, args: argparse.Namespace) -> int:
 
 
 def _lock(root: Path, args: argparse.Namespace) -> int:
-    record = lock(root, args.task, [Path.cwd() / p for p in args.paths], replace=args.replace)
+    record = lock(
+        root,
+        args.task,
+        [Path.cwd() / p for p in args.paths],
+        replace=args.replace,
+        approved_by=args.approved_by,
+    )
     print(f"locked {record.relative_to(root).as_posix()}")
     return 0
 
@@ -898,6 +916,7 @@ def _parser() -> argparse.ArgumentParser:
     )
     lock_cmd = commands.add_parser("lock", help="lock test files for a task")
     lock_cmd.add_argument("--replace", action="store_true", help="replace an existing lock")
+    lock_cmd.add_argument("--approved-by", help="who approved this relock, recorded in the record")
     lock_cmd.add_argument("task")
     lock_cmd.add_argument("paths", nargs="+")
     lock_cmd.set_defaults(run=_lock)

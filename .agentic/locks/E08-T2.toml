@@ -1,5 +1,6 @@
 task = "E08-T2"
-locked = 2026-11-20T21:03:26Z
+locked = 2026-11-25T07:06:21Z
+approved_by = "michael-muir"
 
 [[files]]
 path = "tests/test_evidence_draft.py"
