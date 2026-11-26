@@ -699,6 +699,12 @@ def session_env(role: str, **more: str) -> dict[str, str]:
     return {"FACTORY_ROLE": role, **more}
 
 
+NO_SHELL_LAST_LINE = (
+    "Don't commit: the driver commits your files. End with your handoff note as your final "
+    "reply, and stop."
+)
+
+
 def prompt(
     name: str,
     role: str,
@@ -710,9 +716,12 @@ def prompt(
     note: str = "",
     request: str = "",
     extra: Sequence[str] = (),
+    shell: bool = True,
 ) -> str:
     """The stage prompt for one role's session: plain text, the same for the same inputs.
-    `extra` lines say what the driver hands this session (a gate report, where the PR body goes)."""
+    `extra` lines say what the driver hands this session (a gate report, where the PR body goes).
+    A role without a `shell` can't commit, so it ends with its handoff note as its reply instead
+    (the product owner's decision of 26 Nov 2026, ADR 0046)."""
     found = stage(name)
     if role not in found.roles:
         raise ValueError(f"{role} has no session in the {name} stage")
@@ -733,7 +742,10 @@ def prompt(
     if request:
         lines.append(f"The request:\n{request.strip()}")
     lines += extra
-    lines.append("Work only in this worktree. Commit your work and stop.")
+    if shell:
+        lines.append("Work only in this worktree. Commit your work and stop.")
+    else:
+        lines += ["Work only in this worktree.", NO_SHELL_LAST_LINE]
     return "\n".join(lines)
 
 
@@ -1463,6 +1475,7 @@ class Driver:
             note=self._note(current.name, task),
             request=self.rec["request"] if current.name == "spec" else "",
             extra=extra,
+            shell=has_shell(self.job.root, role),
         )
         allowed = role_allowed_tools(self.job.root, role)
         argv = session_argv(self.pipeline["agent_command"], role, allowed, text)
@@ -1768,6 +1781,12 @@ class Driver:
         task file's findings after each, then sets the review round to 1."""
         root = Path(run["worktree"])
         rel = f".agentic/tasks/{task}.md"
+        try:
+            handoff = self._reviewer_handoff(task, run, sessions)
+        except _Stop as stop:
+            return self._stop(str(stop))
+        if handoff is not None:
+            return self._command(current, task, run, "commit", handoff)
         if _dirty(root, rel):
             last = sessions[-1]["role"] if sessions else ""
             if last == "commit":
@@ -1780,12 +1799,58 @@ class Driver:
         done = {s["role"] for s in sessions if s.get("exit_code") == 0}
         pending = [role for role in REVIEWERS if role not in done]
         if pending:
-            return self._send(current, task, pending[0])
+            try:
+                report, _ = self._hand_report(task, run)
+            except _Stop as stop:
+                return self._stop(str(stop))
+            env = {"FACTORY_GATE_REPORT": str(report)}
+            return self._send(
+                current, task, pending[0], env=env, extra=[_review_line(pending[0], report)]
+            )
         if _review_round(root / rel) != 1 and "round" not in done:
             argv = [sys.executable, str(STATE_PATH), "task", "set", task, "--round", "1"]
             return self._command(current, task, run, "round", argv)
         self._keep_findings(root, task)
         return self._judge(current, task)
+
+    def _reviewer_handoff(
+        self, task: str, run: Mapping[str, Any], sessions: list[dict[str, Any]]
+    ) -> list[str] | None:
+        """After a reviewer without a shell: its reply, recorded as its handoff and committed
+        with the findings (ADR 0046). None when there's nothing to record; a reply without the
+        three headings adds a warning instead. The session's entry says which, so a second
+        step never records it twice."""
+        last = sessions[-1] if sessions else {}
+        role = str(last.get("role", ""))
+        if role not in REVIEWERS or last.get("exit_code") != 0 or "handoff" in last:
+            return None
+        if has_shell(self.job.root, role):
+            return None
+        try:
+            commands = self.runner.status(str(run["id"])).get("commands", [])
+        except RunnerError as exc:
+            raise _Stop(str(exc)) from None
+        log = commands[int(last["index"]) - 1].get("log", "") if commands else ""
+        text = session_reply(Path(str(log))) if log else ""
+        missing = _state().check_headings("reply", text, _state().HANDOFF_HEADINGS)
+        if not text.strip() or missing:
+            last["handoff"] = "missing"
+            where = f"{last['run']}#{last['index']}"
+            lacks = ", ".join(p.where for p in missing) or "any text"
+            self.rec["warnings"].append(
+                f"no handoff from the {role} session {where}: its reply lacks {lacks}"
+            )
+            self.job.save()
+            return None
+        last["handoff"] = "recorded"  # saved with the command that records it
+        root = Path(str(run["worktree"]))
+        body = _scratch(root) / f"handoff-{role}.md"
+        body.write_bytes(text.encode("utf-8"))
+        rel = f".agentic/tasks/{task}.md"
+        what = "review findings and handoff" if _dirty(root, rel) else "handoff"
+        message = f"chore({task}): {what} from {role}"
+        here = str(Path(__file__).resolve())
+        return [sys.executable, here, "_handoff", task, role, str(body), message]
 
     def _keep_findings(self, root: Path, task: str) -> None:
         """The task's committed findings, kept in the record for the job's summary."""
@@ -1999,6 +2064,40 @@ def _scratch(worktree: Path) -> Path:
 
 def _dirty(root: Path, *paths: str) -> bool:
     return bool(_git(root, "status", "--porcelain", "--", *(paths or (".",))).strip())
+
+
+def _review_line(role: str, report: Path) -> str:
+    """What a review session is told about the driver's gate report (ADR 0046)."""
+    given = f"The driver's newest full gate report is {report} ($FACTORY_GATE_REPORT)."
+    if role == "verifier":
+        return (
+            f"{given} Check it, and don't run the gate: its verdict is pass, no check was "
+            "skipped as not selected (it ran with no --checks), it isn't dirty, and its commit "
+            "is HEAD or differs from HEAD only under .agentic/. Then map each acceptance "
+            "criterion to a passing test tagged with its id."
+        )
+    return (
+        f"{given} Use it as the gate's evidence. Don't run the full gate: if you need more, "
+        "run one check with gate.py --checks <name>."
+    )
+
+
+def session_reply(log: Path) -> str:
+    """A session's final reply: the `result` of its JSON output, or its plain output when it
+    printed no JSON. Empty when the log can't be read."""
+    try:
+        text = log.read_text(encoding="utf-8", errors="replace").strip()
+    except OSError:
+        return ""
+    for candidate in [text, *reversed(text.splitlines())]:
+        try:
+            data = json.loads(candidate)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(data, dict) and "result" in data:
+            result = data["result"]
+            return result.strip() if isinstance(result, str) else ""
+    return text
 
 
 def _review_round(path: Path) -> object:
@@ -2457,6 +2556,19 @@ def _commit(argv: Sequence[str]) -> int:
     return 0
 
 
+def _handoff(argv: Sequence[str]) -> int:
+    """`_handoff TASK ROLE BODY MESSAGE`: record a reviewer's reply as its handoff with
+    `state.py handoff`, then commit it with the task file's findings (ADR 0046)."""
+    if len(argv) != 4:
+        raise BadInput("_handoff needs a task, a role, a body file and a message")
+    task, role, body, message = argv
+    argv_ = [sys.executable, str(STATE_PATH), "handoff", task, "--from", role, "--body-file", body]
+    done = subprocess.run(argv_, check=False)
+    if done.returncode != 0:
+        return done.returncode
+    return _commit([message, "--", f".agentic/tasks/{task}.md", ".agentic/handoffs"])
+
+
 # --- the command line ---------------------------------------------------------------------------
 
 
@@ -2638,6 +2750,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             return _env(argv[1:])
         if argv[:1] == ["_commit"]:
             return _commit(argv[1:])
+        if argv[:1] == ["_handoff"]:
+            return _handoff(argv[1:])
         args = _parser().parse_args(argv)
     except SystemExit as exc:
         return exc.code if isinstance(exc.code, int) else 2
