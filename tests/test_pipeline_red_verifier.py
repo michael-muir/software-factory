@@ -4,10 +4,10 @@ Covers E13 AC-13 as amended on 26 Nov 2026 (issue #105). The live run on #82 fou
 driver counted the Verifier's session as done because it exited 0, though the Verifier's own gate
 had gone red. The product owner's decisions: the review stage, and `check review`, need the
 driver's newest gate report to be a pass, for the head or for a commit whose only later changes
-are under `.agentic/` (widened the same day for #106); and the Verifier's reply ends with `VERDICT: pass` or
-`VERDICT: fail <checks>`, read as the last such line of the session's JSON `result`. A fail, a
-missing verdict or an unreadable result stops the job as `needs-human`, and it doesn't go back
-to the gate stage.
+are under `.agentic/` (widened the same day for #106); and the Verifier's reply ends with
+`VERDICT: pass` or `VERDICT: fail <checks>`, read as the last such line of the session's JSON
+`result`. A fail, a missing verdict or an unreadable result stops the job as `needs-human`, and
+it doesn't go back to the gate stage.
 """
 
 from __future__ import annotations
@@ -163,7 +163,10 @@ def test_a_missing_or_unreadable_verdict_stops_the_job(
 def test_the_review_stage_stops_when_the_head_has_changed_since_the_green_gate(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    change = [{"write": {"widgets_1.py": "WIDGETS = 2\n"}}, {"commit": "fix: widgets"}]
+    change: list[dict[str, Any]] = [
+        {"write": {"widgets_1.py": "WIDGETS = 2\n"}},
+        {"commit": "fix: widgets"},
+    ]
     root, log, code = drive_with_verifier(
         tmp_path, monkeypatch, capsys, *change, reply("VERDICT: pass")
     )
