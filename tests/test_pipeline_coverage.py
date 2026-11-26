@@ -21,8 +21,8 @@ LIVE = "E13-AC-21"  # the product owner's live run on a real issue: no test can 
 
 
 @pytest.mark.ac("E13-AC-22")
-def test_e13_spec_defines_ac_01_to_ac_22() -> None:
-    assert spec_ac_ids("E13") == {f"E13-AC-{n:02d}" for n in range(1, 23)}
+def test_e13_spec_defines_ac_01_to_ac_23() -> None:
+    assert spec_ac_ids("E13") == {f"E13-AC-{n:02d}" for n in range(1, 24)}
 
 
 @pytest.mark.ac("E13-AC-22")
