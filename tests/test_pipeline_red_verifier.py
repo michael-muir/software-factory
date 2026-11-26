@@ -4,7 +4,7 @@ Covers E13 AC-13 as amended on 26 Nov 2026 (issue #105). The live run on #82 fou
 driver counted the Verifier's session as done because it exited 0, though the Verifier's own gate
 had gone red. The product owner's decisions: the review stage, and `check review`, need the
 driver's newest gate report to be a pass, for the head or for a commit whose only later changes
-are to the task file; and the Verifier's reply ends with `VERDICT: pass` or
+are under `.agentic/` (widened the same day for #106); and the Verifier's reply ends with `VERDICT: pass` or
 `VERDICT: fail <checks>`, read as the last such line of the session's JSON `result`. A fail, a
 missing verdict or an unreadable result stops the job as `needs-human`, and it doesn't go back
 to the gate stage.
@@ -213,6 +213,15 @@ def test_check_review_passes_when_only_the_task_file_changed_since_the_report(
     tmp_path: Path,
 ) -> None:
     root, gated_at = gated(tmp_path)
+    assert check_review(root, gate_report(gated_at)) == []
+
+
+@pytest.mark.ac(AC)
+def test_check_review_passes_when_only_files_under_agentic_changed_since_the_report(
+    tmp_path: Path,
+) -> None:
+    root, gated_at = gated(tmp_path)
+    commit(root, {".agentic/handoffs/20261126T000000Z-E31-T1.md": "## Done\n"}, "chore: handoff")
     assert check_review(root, gate_report(gated_at)) == []
 
 
