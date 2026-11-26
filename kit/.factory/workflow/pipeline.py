@@ -526,7 +526,7 @@ def _check_gate(c: Checkout) -> Found:
 
 def _gate_for_review(c: Checkout) -> Found:
     """The review stage needs the driver's newest gate report to be a pass, for the head or for
-    a commit whose only later changes are to the task file (the findings commits)."""
+    a commit whose only later changes are under `.agentic/` (findings and handoff commits)."""
     report = c.gate_report
     if report is None:
         return [(GATE, f"no gate report for {c.task}")]
@@ -539,7 +539,7 @@ def _gate_for_review(c: Checkout) -> Found:
         changed = set(_lines(_git(c.root, "diff", "--name-only", commit, "HEAD")))
     except GitError:
         return [(GATE, f"is for {commit[:SHORT]}, which is not on the branch")]
-    others = sorted(changed - {f".agentic/tasks/{c.task}.md"})
+    others = sorted(rel for rel in changed if not rel.startswith(".agentic/"))
     if others:
         return [(GATE, f"is for {commit[:SHORT]}, and {', '.join(others)} changed since")]
     return []
