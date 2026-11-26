@@ -1,7 +1,7 @@
 # E13 · Full-track pipeline design note
 
 Spec: [E13 spec](../specs/E13-full-track-pipeline.md) · Issue: [#13](https://github.com/michael-muir/software-factory/issues/13)
-Status: **Accepted by the product owner, 21 Nov 2026** · ADRs: [0040](../adr/0040-a-stage-passes-only-by-a-check-over-committed-files.md) · [0041](../adr/0041-the-driver-is-a-resumable-step-machine-under-the-e18-lease.md) · [0042](../adr/0042-a-role-session-is-a-templated-command-held-by-an-allow-list-and-the-hook.md) · [0043](../adr/0043-the-driver-opens-prs-through-a-forge-only-after-check-pr-strict.md) · [0044](../adr/0044-approvals-commit-status-lines-with-git-plumbing.md)
+Status: **Accepted by the product owner, 21 Nov 2026** · ADRs: [0040](../adr/0040-a-stage-passes-only-by-a-check-over-committed-files.md) · [0041](../adr/0041-the-driver-is-a-resumable-step-machine-under-the-e18-lease.md) · [0042](../adr/0042-a-role-session-is-a-templated-command-held-by-an-allow-list-and-the-hook.md) · [0043](../adr/0043-the-driver-opens-prs-through-a-forge-only-after-check-pr-strict.md) · [0044](../adr/0044-approvals-commit-status-lines-with-git-plumbing.md) · [0047](../adr/0047-a-relock-is-a-recorded-human-decision-the-driver-carries-out.md)
 
 ## Summary
 
@@ -299,6 +299,10 @@ Each slice ships on its own:
   - After the session of a role without a shell, the driver commits what it left in the tree, with `pipeline.py _commit "docs(<EPIC>): <stage> from the <role>" -- .`. This covers the spec-writer and the architect, which can't commit. A tree still dirty after that commit stops the job for a human. A failed session's files are never committed.
   - `has_shell(root, role)` reads the role's card: `run` with no `[scope].run` is a shell. The reviewers' scoped `run` isn't one, so their findings are still committed as before.
   - The done-when test, `tests/test_pipeline_end_to_end.py`, installs the kit with `install.py` into its temp repo and runs the installed `pipeline.py` and `run.py --daemon` as commands.
+- **26 Nov 2026, the product owner's decisions after the live run (#109, E13-T8, ADR 0047):**
+  - **The Debugger's stop.** After each Debugger session in the gate stage, `_gate` reads the task file in the worktree. An open blocker finding that the gated commit's task file didn't have stops the job, with the findings in the reason, and the Debugger's `[[sessions]]` entry records their ids as `blockers`. A finding left uncommitted is committed first, with `chore(<task>): the debugger's blocker findings`.
+  - **Relock approval.** `approve <job> relock --task <id> --by <name> [--files f...]` claims the lease, checks the job is `needs-human` at a slice stage, and reads the lock record and files on the slice's last branch with `git show`, to default `--files` and refuse a change that isn't approved. It appends a `[[decisions]]` entry with `checkpoint = "relock"`, `lock_task`, `files` and `findings` (the Debugger's `blockers`), raises the attempt, and sets the job `ready`. It writes no branch.
+  - **The relock step.** At the start of a slice step, a relock decision for the current attempt runs first, as driver commands marked `relock` in their `[[sessions]]` entries: `agents.py lock --replace` (role `relock`), one `state.py finding set <task> <id> --status fixed` per finding (role `finding`), and `_commit "test(<task>): relock approved by <name>"` over the lock record and the task file. The hash check runs in the driver, on the new segment's worktree, before the lock command, so a refusal writes nothing. The stage's own plan never sees the marked sessions, so it reruns from its start.
 
 ## Risks
 

@@ -18,10 +18,10 @@ Used by: `test-designer`.
 2. Lock them: `python .factory/agents/agents.py lock <task> <file>...`. The task must have a task file in `.agentic/tasks/`.
 3. Check the record in `.agentic/locks/<task>.toml`, and run `python .factory/agents/agents.py check`.
 4. Commit the tests and the lock record in the same `test(...)` commit, before any implementation.
-5. If a locked test must change, stop and ask a human. Only with their approval, fix it in its own `test(...)` commit, saying "expectations unchanged" (or what changed and why), and relock with `python .factory/agents/agents.py lock --replace <task> <file>...`. Flag the relock in the PR.
+5. If a locked test must change, stop and ask a human. In a pipeline job, record it as a blocker finding (`python .factory/state/state.py finding add <task> --severity blocker "<what and why>"`) and stop. Only with their approval, fix it in its own `test(...)` commit, saying "expectations unchanged" (or what changed and why), and relock with `python .factory/agents/agents.py lock --replace <task> <file>... --approved-by <name>`, listing every file already in the record: `--replace` keeps only the files listed. In a pipeline job the human approves with `pipeline.py approve <job> relock --task <task> --by <name>`, and the driver relocks. Flag the relock in the PR.
 
 ## Done when
 
 - `.agentic/locks/<task>.toml` lists every test file of the slice, and `agents.py check` passes.
 - The gate reports `Locks: N locked files, none changed`.
-- Any relock was approved by a human and is called out in the PR.
+- Any relock was approved by a human, names them in `approved_by`, and is called out in the PR.
