@@ -19,6 +19,7 @@ Used by: `verifier`.
 3. Read the report: `Locks` must say none changed, `Docs` must have no problems, and every check must pass or be `n/a`.
 4. For each AC in the slice, find a passing test tagged with its id.
 5. Record the result: the verdict, the commit, and each check with its time, in the handoff and later the PR.
+6. In a pipeline session, end your reply with the line `VERDICT: pass`, or `VERDICT: fail <checks>` naming the failing checks. The driver reads the last such line, and a reply without one counts as a fail.
 
 ## Done when
 

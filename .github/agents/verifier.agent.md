@@ -33,6 +33,7 @@ Must not:
 
 - The gate report, attached to the task's handoff.
 - A pass, or a fail with the failing checks.
+- In a pipeline session, its reply ends with the line `VERDICT: pass` or `VERDICT: fail <checks>`. The driver reads the last such line, and a missing one counts as a fail.
 
 ## Hand-off
 
