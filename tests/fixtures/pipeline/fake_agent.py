@@ -91,12 +91,13 @@ def main() -> int:
             cost = action["cost"]
         elif "print" in action:
             printed = action["print"]
+    result = "done\nVERDICT: pass" if args.role == "verifier" else "done"  # E13-T6
     if printed is not None:
         print(printed)
     elif cost is None:
-        print(json.dumps({"result": "done"}))
+        print(json.dumps({"result": result}))
     else:
-        print(json.dumps({"result": "done", "total_cost_usd": cost}))
+        print(json.dumps({"result": result, "total_cost_usd": cost}))
     return code
 
 
