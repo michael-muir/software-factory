@@ -1,6 +1,7 @@
 task = "E13-T9"
-locked = 2026-11-27T18:31:47Z
+locked = 2026-11-27T18:32:49Z
+approved_by = "michael-muir"
 
 [[files]]
 path = "tests/test_pipeline_adversary_tests.py"
-sha256 = "c90b73da4ca773fa9ad56749aa52d19e93b1df2bec65e89aed605e022028de17"
+sha256 = "3931138933f31f4432537ee46d61fffc09f483072c83aaa6dd418f59b5b9f108"

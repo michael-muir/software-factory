@@ -76,7 +76,7 @@ def test_the_adversary_s_new_attack_test_passes_review_and_the_docs_stage_gates_
     assert record["status"] == "awaiting-merge"
     assert "docs-writer" in roles(log)
     shipped = str(task_entry(root)["head"])
-    assert git(root, "show", f"{shipped}:{ATTACK}") == ATTACK_TEXT.rstrip("\n")
+    assert git(root, "show", f"{shipped}:{ATTACK}") == ATTACK_TEXT
     gates = record["gates"]
     assert len(gates) == 2 and len(gate_calls(tmp_path)) == 2
     assert gates[-1]["commit"] == shipped and gates[-1]["verdict"] == "pass"
