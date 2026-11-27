@@ -66,6 +66,18 @@ SLICE_ORDER = ["test", "build", "gate", "review", "docs", "ship"]
 ONE = {TASK: "E31 AC-01, AC-02."}
 TWO = {TASK: "E31 AC-01.", TASK2: "E31 AC-02."}
 NOTE = "Say that the widgets are small."
+HANDOFF = "## Done\n\n- Reviewed.\n\n## Next\n\n- The next reviewer.\n\n## Open questions\n\nNone."
+# the reviewers without a shell end with their handoff note as their reply (E13-T7, ADR 0046)
+HANDOFFS = {
+    role: [[{"print": json.dumps({"result": HANDOFF, "total_cost_usd": 0.01})}]]
+    for role in (
+        "verifier",
+        "spec-reviewer",
+        "standards-reviewer",
+        "security-reviewer",
+        "perf-reviewer",
+    )
+}
 
 
 def plan_turns(tasks: Mapping[str, str], *, revised: bool = False) -> dict[str, Any]:
@@ -263,7 +275,7 @@ def rev_list(root: Path, base: str, head: str) -> list[str]:
 @pytest.mark.ac("E13-AC-20")
 def test_a_two_task_job_goes_from_new_to_done_on_a_real_daemon(line: Line) -> None:
     second = slice_turns(TASK2, {TEST2_REL: TESTS2})
-    line.script(turns(plan_turns(TWO), slice_turns(), second))
+    line.script(turns(plan_turns(TWO), slice_turns(), second, HANDOFFS))
     line.new()
 
     assert line.run() == 0
@@ -332,6 +344,11 @@ def test_a_two_task_job_goes_from_new_to_done_on_a_real_daemon(line: Line) -> No
         )
         assert line.runner_usd(run["id"]) == recorded, run["id"]
     assert not record["warnings"]
+    # the driver recorded each reviewer's reply as a handoff: five per task
+    for head, count in ((head1, 5), (head2, 10)):
+        names = git(line.root, "ls-tree", "-r", "--name-only", head, "--", ".agentic/handoffs")
+        notes = [name for name in names.split() if name.endswith(".md")]
+        assert len(notes) == count, notes
 
     # the summary lists both PRs
     summary = line.summary()

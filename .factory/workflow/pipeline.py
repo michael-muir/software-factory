@@ -752,6 +752,12 @@ def session_env(role: str, **more: str) -> dict[str, str]:
     return {"FACTORY_ROLE": role, **more}
 
 
+NO_SHELL_LAST_LINE = (
+    "Don't commit: the driver commits your files. End with your handoff note as your final "
+    "reply, and stop."
+)
+
+
 def prompt(
     name: str,
     role: str,
@@ -763,9 +769,12 @@ def prompt(
     note: str = "",
     request: str = "",
     extra: Sequence[str] = (),
+    shell: bool = True,
 ) -> str:
     """The stage prompt for one role's session: plain text, the same for the same inputs.
-    `extra` lines say what the driver hands this session (a gate report, where the PR body goes)."""
+    `extra` lines say what the driver hands this session (a gate report, where the PR body goes).
+    A role without a `shell` can't commit, so it ends with its handoff note as its reply instead
+    (the product owner's decision of 26 Nov 2026, ADR 0046)."""
     found = stage(name)
     if role not in found.roles:
         raise ValueError(f"{role} has no session in the {name} stage")
@@ -786,13 +795,17 @@ def prompt(
     if request:
         lines.append(f"The request:\n{request.strip()}")
     lines += extra
-    lines.append("Work only in this worktree. Commit your work and stop.")
+    if shell:
+        lines.append("Work only in this worktree. Commit your work and stop.")
+    else:
+        lines += ["Work only in this worktree.", NO_SHELL_LAST_LINE]
     return "\n".join(lines)
 
 
 VERDICT_ASK = (
-    "End your reply with one line, `VERDICT: pass` or `VERDICT: fail <checks>` naming the "
-    "failing checks. The driver reads the last such line, and a missing verdict counts as a fail."
+    "End your reply, after your handoff note, with one line, `VERDICT: pass` or "
+    "`VERDICT: fail <checks>` naming the failing checks. The driver reads the last such line, "
+    "and a missing verdict counts as a fail."
 )
 
 
@@ -1329,7 +1342,7 @@ E18_STATUS = {
 # --- the driver (ADR 0041) ----------------------------------------------------------------------
 
 STOP_OK, STOP_HUMAN, GO = 0, 1, -1
-DRIVER_ROLES = ("gate", "commit", "round", "push")  # commands the driver sends itself
+DRIVER_ROLES = ("gate", "commit", "round", "push", "relock", "finding")  # the driver's own
 SCRATCH = "factory-pipeline"  # in the runner worktree's own git dir: never tracked or dirty
 
 
@@ -1382,6 +1395,10 @@ class Driver:
         if outstanding is not None:
             return self._collect(outstanding)
         sessions = self._sessions(current.name, task)
+        relock = self._relock(current, task, sessions)
+        if relock is not None:
+            return relock
+        sessions = [s for s in sessions if not s.get("relock")]
         plan = SLICE_PLANS.get(current.name)
         if plan is None:
             left = self._leftovers(current, task, sessions)
@@ -1522,6 +1539,7 @@ class Driver:
             note=self._note(current.name, task),
             request=self.rec["request"] if current.name == "spec" else "",
             extra=extra,
+            shell=has_shell(self.job.root, role),
         )
         allowed = role_allowed_tools(self.job.root, role)
         argv = session_argv(self.pipeline["agent_command"], role, allowed, text)
@@ -1797,8 +1815,23 @@ class Driver:
     def _gate(
         self, current: Stage, task: str, run: dict[str, Any], sessions: list[dict[str, Any]]
     ) -> int:
-        """Gate, then the Debugger and the gate again on red, up to `gate_retries` times."""
-        if not sessions or sessions[-1]["role"] != "gate":
+        """Gate, then the Debugger and the gate again on red, up to `gate_retries` times. A new
+        open blocker finding after a Debugger session stops for a human (ADR 0047)."""
+        last = sessions[-1]["role"] if sessions else ""
+        if last in ("debugger", "commit"):
+            asked = self._new_blockers(task, run)
+            if asked:
+                rel = f".agentic/tasks/{task}.md"
+                if last == "debugger" and _dirty(Path(run["worktree"]), rel):
+                    argv = self._commit_argv(
+                        f"chore({task}): the debugger's blocker findings", [rel]
+                    )
+                    return self._command(current, task, run, "commit", argv)
+                debugger = [s for s in sessions if s["role"] == "debugger"][-1]
+                debugger["blockers"] = [str(f.get("id")) for f in asked]
+                listed = "; ".join(f"{f.get('id')} [blocker] {f.get('summary')}" for f in asked)
+                return self._stop(f"gate: the debugger needs a human: {listed}")
+        if last != "gate":
             return self._gate_command(current, task, run)
         latest = self._latest_gate(task)
         if latest is not None and latest.get("verdict") == "pass":
@@ -1820,6 +1853,67 @@ class Driver:
         env = {"FACTORY_GATE_REPORT": str(path)}
         return self._send(current, task, "debugger", env=env, extra=[line])
 
+    def _new_blockers(self, task: str, run: Mapping[str, Any]) -> list[dict[str, Any]]:
+        """Open blocker findings in the worktree's task file that the gated commit didn't have."""
+        rel = f".agentic/tasks/{task}.md"
+        try:
+            after = (Path(run["worktree"]) / rel).read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            return []
+        latest = self._latest_gate(task)
+        before = ""
+        if latest is not None and latest.get("commit"):
+            try:
+                before = _git(Path(run["worktree"]), "show", f"{latest['commit']}:{rel}")
+            except GitError:
+                before = ""
+        known = {f.get("id") for f in _open_blockers(before)}
+        return [f for f in _open_blockers(after) if f.get("id") not in known]
+
+    # -- a relock the product owner approved (spec AC-23, ADR 0047)
+
+    def _relock_decision(self, task: str) -> dict[str, Any] | None:
+        for decision in reversed(self.rec["decisions"]):
+            if decision.get("attempt") == self._attempt() and decision.get("task", task) == task:
+                return decision if decision.get("checkpoint") == "relock" else None
+        return None
+
+    def _relock(self, current: Stage, task: str, sessions: list[dict[str, Any]]) -> int | None:
+        """Carry out an approved relock before the stopped stage reruns: check that only the
+        approved files' hashes changed, `agents.py lock --replace` every locked file plus the
+        approved ones, mark the Debugger's blocker findings fixed, and commit. None once done,
+        or when no relock was approved for this attempt."""
+        decision = None if current.scope != "slice" else self._relock_decision(task)
+        if decision is None:
+            return None
+        steps = {str(s["relock"]) for s in sessions if s.get("relock") and s.get("exit_code") == 0}
+        if "commit" in steps:
+            return None
+        try:
+            run = self._open_run(task) or self._new_run(current, task)
+        except _Stop as stop:
+            return self._stop(str(stop))
+        root = Path(run["worktree"])
+        lock_task, by = str(decision["lock_task"]), str(decision["by"])
+        rel = _lock_rel(lock_task)
+        if "lock" not in steps:
+            try:
+                files = _relock_files(root, lock_task, [str(f) for f in decision["files"]])
+            except _Stop as stop:
+                return self._stop(f"relock: {stop}")
+            argv = [sys.executable, str(AGENTS_PATH), "lock", "--replace", lock_task, *files]
+            argv += ["--approved-by", by]
+            return self._command(current, task, run, "relock", argv, relock="lock")
+        findings = [str(f) for f in decision.get("findings", [])]
+        for fid in findings:
+            if f"finding:{fid}" not in steps:
+                argv = [sys.executable, str(STATE_PATH), "finding", "set", task, fid]
+                argv += ["--status", "fixed"]
+                return self._command(current, task, run, "finding", argv, relock=f"finding:{fid}")
+        paths = [rel, *([f".agentic/tasks/{task}.md"] if findings else [])]
+        argv = self._commit_argv(f"test({lock_task}): relock approved by {by}", paths)
+        return self._command(current, task, run, "commit", argv, relock="commit")
+
     def _review(
         self, current: Stage, task: str, run: dict[str, Any], sessions: list[dict[str, Any]]
     ) -> int:
@@ -1827,6 +1921,12 @@ class Driver:
         task file's findings after each, then sets the review round to 1."""
         root = Path(run["worktree"])
         rel = f".agentic/tasks/{task}.md"
+        try:
+            handoff = self._reviewer_handoff(task, run, sessions)
+        except _Stop as stop:
+            return self._stop(str(stop))
+        if handoff is not None:
+            return self._command(current, task, run, "commit", handoff)
         if _dirty(root, rel):
             last = sessions[-1]["role"] if sessions else ""
             if last == "commit":
@@ -1845,8 +1945,14 @@ class Driver:
                 problems += [("verifier", why)] if why else []
             if problems:
                 return self._stop("; ".join(f"{p}: review: {m}" for p, m in problems))
-            extra = [VERDICT_ASK] if pending[0] == "verifier" else []
-            return self._send(current, task, pending[0], extra=extra)
+            try:
+                report, _ = self._hand_report(task, run)
+            except _Stop as stop:
+                return self._stop(str(stop))
+            env = {"FACTORY_GATE_REPORT": str(report)}
+            extra = [_review_line(pending[0], report)]
+            extra += [VERDICT_ASK] if pending[0] == "verifier" else []
+            return self._send(current, task, pending[0], env=env, extra=extra)
         if _review_round(root / rel) != 1 and "round" not in done:
             argv = [sys.executable, str(STATE_PATH), "task", "set", task, "--round", "1"]
             return self._command(current, task, run, "round", argv)
@@ -1862,6 +1968,45 @@ class Driver:
         n = int(session["index"])
         log = ran[n - 1].get("log", "") if 0 < n <= len(ran) else ""
         return verifier_verdict(Path(str(log))) if log else "the verifier's session has no log"
+
+    def _reviewer_handoff(
+        self, task: str, run: Mapping[str, Any], sessions: list[dict[str, Any]]
+    ) -> list[str] | None:
+        """After a reviewer without a shell: its reply, recorded as its handoff and committed
+        with the findings (ADR 0046). None when there's nothing to record; a reply without the
+        three headings adds a warning instead. The session's entry says which, so a second
+        step never records it twice."""
+        last = sessions[-1] if sessions else {}
+        role = str(last.get("role", ""))
+        if role not in REVIEWERS or last.get("exit_code") != 0 or "handoff" in last:
+            return None
+        if has_shell(self.job.root, role):
+            return None
+        try:
+            commands = self.runner.status(str(run["id"])).get("commands", [])
+        except RunnerError as exc:
+            raise _Stop(str(exc)) from None
+        log = commands[int(last["index"]) - 1].get("log", "") if commands else ""
+        text = session_reply(Path(str(log))) if log else ""
+        missing = _state().check_headings("reply", text, _state().HANDOFF_HEADINGS)
+        if not text.strip() or missing:
+            last["handoff"] = "missing"
+            where = f"{last['run']}#{last['index']}"
+            lacks = ", ".join(p.where for p in missing) or "any text"
+            self.rec["warnings"].append(
+                f"no handoff from the {role} session {where}: its reply lacks {lacks}"
+            )
+            self.job.save()
+            return None
+        last["handoff"] = "recorded"  # saved with the command that records it
+        root = Path(str(run["worktree"]))
+        body = _scratch(root) / f"handoff-{role}.md"
+        body.write_bytes(text.encode("utf-8"))
+        rel = f".agentic/tasks/{task}.md"
+        what = "review findings and handoff" if _dirty(root, rel) else "handoff"
+        message = f"chore({task}): {what} from {role}"
+        here = str(Path(__file__).resolve())
+        return [sys.executable, here, "_handoff", task, role, str(body), message]
 
     def _keep_findings(self, root: Path, task: str) -> None:
         """The task's committed findings, kept in the record for the job's summary."""
@@ -2058,6 +2203,59 @@ SLICE_PLANS: dict[str, Callable[..., int]] = {
 SUMMARY_TABLES = ("stages", "gates", "findings", "prs")
 
 
+def _open_blockers(text: str) -> list[dict[str, Any]]:
+    """The open blocker findings in a task file's text; none when it doesn't parse."""
+    parsed = _state().parse(text) if text else "empty"
+    findings = [] if isinstance(parsed, str) else parsed[0].get("findings", [])
+    return [
+        dict(f)
+        for f in (findings if isinstance(findings, list) else [])
+        if isinstance(f, dict) and f.get("status") == "open" and f.get("severity") == "blocker"
+    ]
+
+
+def _locked_files(text: str) -> dict[str, str]:
+    """A lock record's files and their hashes, in the record's order."""
+    try:
+        data = tomllib.loads(text)
+    except tomllib.TOMLDecodeError as exc:
+        raise _Stop(f"the lock record is not valid TOML: {exc}") from None
+    files = data.get("files", [])
+    return {
+        str(f.get("path")): str(f.get("sha256"))
+        for f in (files if isinstance(files, list) else [])
+        if isinstance(f, dict)
+    }
+
+
+def _changed_locked(read: Callable[[str], bytes | None], locked: Mapping[str, str]) -> list[str]:
+    """The locked files whose hash no longer matches (or that are gone); `read(rel)` gives a
+    file's bytes, or None."""
+    sha = _agents().lf_sha256
+    return [rel for rel, want in locked.items() if (data := read(rel)) is None or sha(data) != want]
+
+
+def _relock_files(root: Path, lock_task: str, approved: Sequence[str]) -> list[str]:
+    """Every file in the committed lock record, then the approved files it doesn't hold. Stops
+    when a file that isn't approved has a new hash in the worktree."""
+    try:
+        text = _git(root, "show", f"HEAD:{_lock_rel(lock_task)}")
+    except GitError:
+        raise _Stop(f"{_lock_rel(lock_task)} is not committed") from None
+    locked = _locked_files(text)
+
+    def read(rel: str) -> bytes | None:
+        try:
+            return (root / rel).read_bytes()
+        except OSError:
+            return None
+
+    others = [rel for rel in _changed_locked(read, locked) if rel not in approved]
+    if others:
+        raise _Stop(f"{', '.join(others)} changed but the relock didn't approve it")
+    return [*locked, *(rel for rel in approved if rel not in locked)]
+
+
 def dict_of(entry: Any) -> dict[str, Any]:
     """A record table entry, as the mutable dict it is."""
     assert isinstance(entry, dict)
@@ -2075,6 +2273,40 @@ def _scratch(worktree: Path) -> Path:
 
 def _dirty(root: Path, *paths: str) -> bool:
     return bool(_git(root, "status", "--porcelain", "--", *(paths or (".",))).strip())
+
+
+def _review_line(role: str, report: Path) -> str:
+    """What a review session is told about the driver's gate report (ADR 0046)."""
+    given = f"The driver's newest full gate report is {report} ($FACTORY_GATE_REPORT)."
+    if role == "verifier":
+        return (
+            f"{given} Check it, and don't run the gate: its verdict is pass, no check was "
+            "skipped as not selected (it ran with no --checks), it isn't dirty, and its commit "
+            "is HEAD or differs from HEAD only under .agentic/. Then map each acceptance "
+            "criterion to a passing test tagged with its id."
+        )
+    return (
+        f"{given} Use it as the gate's evidence. Don't run the full gate: if you need more, "
+        "run one check with gate.py --checks <name>."
+    )
+
+
+def session_reply(log: Path) -> str:
+    """A session's final reply: the `result` of its JSON output, or its plain output when it
+    printed no JSON. Empty when the log can't be read."""
+    try:
+        text = log.read_text(encoding="utf-8", errors="replace").strip()
+    except OSError:
+        return ""
+    for candidate in [text, *reversed(text.splitlines())]:
+        try:
+            data = json.loads(candidate)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(data, dict) and "result" in data:
+            result = data["result"]
+            return result.strip() if isinstance(result, str) else ""
+    return text
 
 
 def _review_round(path: Path) -> object:
@@ -2232,7 +2464,83 @@ def _approve(job: Job, checkpoint: str, by: str) -> None:
     commit_file(job.root, branch, rel, new, f"docs({epic}): {kind} {verb} by {by}")
 
 
+def _approve_relock(args: argparse.Namespace) -> int:
+    """`approve <job> relock --task <id> --by NAME [--files f...]` (spec AC-23, ADR 0047)."""
+    if not args.task or not TASK_ID.fullmatch(args.task):
+        raise BadInput("approve relock needs --task, the task whose lock is relocked")
+    files = [Path(f).as_posix() for f in args.files or []]
+    here = _toplevel(Path.cwd())
+    with Job(here, args.job, _session_id(args.session)) as job:
+        rec = job.record
+        if rec["status"] != "needs-human":
+            raise Refused(f"job {args.job} is {rec['status']}, not needs-human")
+        if stage(rec["stage"]).scope != "slice":
+            raise Refused(f"a relock is for a slice stage, and the job is at {rec['stage']}")
+        task = str(rec["task"])
+        runs = [r for r in rec["runs"] if r.get("task") == task]
+        if not runs:
+            raise Refused(f"no runner job has worked on {task} yet")
+        branch = str(runs[-1]["branch"])
+        rel = _lock_rel(args.task)
+        try:
+            locked = _locked_files(_git(job.root, "show", f"{branch}:{rel}"))
+        except GitError:
+            raise Refused(f"{branch} has no lock record for {args.task} ({rel})") from None
+        except _Stop as stop:
+            raise Refused(f"{branch}: {rel}: {stop}") from None
+
+        def read(path: str) -> bytes | None:
+            try:
+                return _git(job.root, "show", f"{branch}:{path}").encode("utf-8")
+            except GitError:
+                return None
+
+        changed = _changed_locked(read, locked)
+        if not files and not changed:
+            raise Refused(f"nothing to relock: every file in {rel} on {branch} still matches")
+        files = files or changed
+        missing = [f for f in files if read(f) is None]
+        if missing:
+            raise Refused(f"{', '.join(missing)} is not on {branch}")
+        others = [f for f in changed if f not in files]
+        if others:
+            raise Refused(f"{', '.join(others)} changed on {branch} too; approve it with --files")
+        attempt = int(rec.get("attempt", 1))
+        debugger = [
+            s
+            for s in rec["sessions"]
+            if s.get("role") == "debugger"
+            and s.get("task") == task
+            and s.get("attempt", 1) == attempt
+        ]
+        findings = [str(f) for f in (debugger[-1].get("blockers", []) if debugger else [])]
+        rec["attempt"] = attempt + 1
+        rec["decisions"].append(
+            {
+                "checkpoint": "relock",
+                "verdict": "approve",
+                "by": args.by,
+                "at": _now(),
+                "note": args.note or "",
+                "task": task,
+                "attempt": attempt + 1,
+                "lock_task": args.task,
+                "files": files,
+                "findings": findings,
+            }
+        )
+        if rec["sessions"] and "exit_code" not in rec["sessions"][-1]:
+            rec["sessions"][-1]["exit_code"] = -1
+        rec["status"], rec["reason"] = "ready", ""
+        job.save()
+        Driver(job, runner_for(job.root))._sync_e18()
+    print(f"{args.job}: relock of {args.task} approved by {args.by}: {', '.join(files)}")
+    return 0
+
+
 def _decide(args: argparse.Namespace, verdict: str) -> int:
+    if args.checkpoint == "relock" and verdict == "approve":
+        return _approve_relock(args)
     if args.checkpoint not in CHECKPOINTS:
         raise BadInput(f"unknown checkpoint {args.checkpoint!r}; one of {', '.join(CHECKPOINTS)}")
     here = _toplevel(Path.cwd())
@@ -2533,6 +2841,19 @@ def _commit(argv: Sequence[str]) -> int:
     return 0
 
 
+def _handoff(argv: Sequence[str]) -> int:
+    """`_handoff TASK ROLE BODY MESSAGE`: record a reviewer's reply as its handoff with
+    `state.py handoff`, then commit it with the task file's findings (ADR 0046)."""
+    if len(argv) != 4:
+        raise BadInput("_handoff needs a task, a role, a body file and a message")
+    task, role, body, message = argv
+    argv_ = [sys.executable, str(STATE_PATH), "handoff", task, "--from", role, "--body-file", body]
+    done = subprocess.run(argv_, check=False)
+    if done.returncode != 0:
+        return done.returncode
+    return _commit([message, "--", f".agentic/tasks/{task}.md", ".agentic/handoffs"])
+
+
 # --- the command line ---------------------------------------------------------------------------
 
 
@@ -2683,9 +3004,15 @@ def _parser() -> argparse.ArgumentParser:
     for verdict in ("approve", "reject"):
         sub = commands.add_parser(verdict, help=f"{verdict} the checkpoint the job waits at")
         sub.add_argument("job")
-        sub.add_argument("checkpoint", help="spec, design or merge")
+        names = "spec, design, merge or relock" if verdict == "approve" else "spec, design or merge"
+        sub.add_argument("checkpoint", help=names)
         sub.add_argument("--by", required=True, help="who decides")
         sub.add_argument("--note", required=verdict == "reject", help="for the role's next try")
+        if verdict == "approve":
+            sub.add_argument("--task", help="relock: the task whose lock record is relocked")
+            sub.add_argument(
+                "--files", nargs="+", help="relock: the approved files (default: those changed)"
+            )
         sub.add_argument("--session", help="the session id")
         sub.set_defaults(func=lambda a, v=verdict: _decide(a, v))
 
@@ -2714,6 +3041,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             return _env(argv[1:])
         if argv[:1] == ["_commit"]:
             return _commit(argv[1:])
+        if argv[:1] == ["_handoff"]:
+            return _handoff(argv[1:])
         args = _parser().parse_args(argv)
     except SystemExit as exc:
         return exc.code if isinstance(exc.code, int) else 2

@@ -1,0 +1,10 @@
+task = "E13-T8"
+locked = 2026-11-26T18:48:26Z
+
+[[files]]
+path = "tests/test_agents_lock_approved_by.py"
+sha256 = "e60b97bbc515e51231d03c7fc0b6dc3ee79c9ed9d66e07702165c33b6de4db1b"
+
+[[files]]
+path = "tests/test_pipeline_relock.py"
+sha256 = "bbb8a4e95da3bdfa41d9fe293cefcebebb37e499d49995cdce3b39b94b431597"
