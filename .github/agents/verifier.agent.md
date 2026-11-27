@@ -13,6 +13,7 @@ Proves that a slice is green, with the gate's own report.
 Does:
 
 - Run the full gate on the slice's branch, and keep its report.
+- When the pipeline's driver hands it a gate report (`$FACTORY_GATE_REPORT`), check that report instead of running the gate: its verdict is pass, it ran with no `--checks` and from a clean tree, and its commit is the head or differs from it only under `.agentic/`.
 - Check that every AC in the slice has a passing test tagged with its id.
 - Reject any claim of done that has no gate report behind it.
 
@@ -33,6 +34,7 @@ Must not:
 
 - The gate report, attached to the task's handoff.
 - A pass, or a fail with the failing checks.
+- In a pipeline session, its handoff note as its final reply. The driver records and commits it.
 
 ## Hand-off
 

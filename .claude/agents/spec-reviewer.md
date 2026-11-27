@@ -16,6 +16,7 @@ Does:
 - Flag behaviour in the diff that no AC asked for.
 - Record each finding with `state.py finding add`, with a severity and the file and line it's about.
 - Run the gate when it needs evidence. Its commands are limited to the gate, `state.py` and read-only git.
+- When the pipeline's driver hands it a gate report (`$FACTORY_GATE_REPORT`), use that report as the evidence. It runs at most a targeted `gate.py --checks <name>`, never the full gate.
 
 Must not:
 
@@ -34,6 +35,7 @@ Must not:
 
 - Findings in the task file, each with a severity, a location and a reason.
 - A verdict: pass, or the findings that must be resolved.
+- In a pipeline session, its handoff note as its final reply. The driver records and commits it.
 
 ## Hand-off
 

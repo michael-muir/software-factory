@@ -299,6 +299,10 @@ Each slice ships on its own:
   - After the session of a role without a shell, the driver commits what it left in the tree, with `pipeline.py _commit "docs(<EPIC>): <stage> from the <role>" -- .`. This covers the spec-writer and the architect, which can't commit. A tree still dirty after that commit stops the job for a human. A failed session's files are never committed.
   - `has_shell(root, role)` reads the role's card: `run` with no `[scope].run` is a shell. The reviewers' scoped `run` isn't one, so their findings are still committed as before.
   - The done-when test, `tests/test_pipeline_end_to_end.py`, installs the kit with `install.py` into its temp repo and runs the installed `pipeline.py` and `run.py --daemon` as commands.
+- **26 Nov 2026, for T7 (the product owner's decisions of the same day, issue #106, ADR 0046):**
+  - `prompt()` takes `shell`, which the driver reads from the role's card. A role without a shell ends with "Don't commit: the driver commits your files. End with your handoff note as your final reply, and stop."
+  - Every review session gets the newest gate report as `$FACTORY_GATE_REPORT`, through `gate-report.json` in the scratch folder. The Verifier's prompt says to check it and not to run the gate. The others' says they may run `gate.py --checks <name>`, never the full gate.
+  - After the session of a reviewer without a shell, the driver reads its reply from the session's log (the JSON `result`, or the plain output). A reply with the three handoff headings goes to `<scratch>/handoff-<role>.md`, and one command, `pipeline.py _handoff TASK ROLE BODY MESSAGE -- PATH...`, records it with `state.py handoff` and commits it with the task file: `chore(<task>): review findings and handoff from <role>`, or `chore(<task>): handoff from <role>` when the task file didn't change. A reply without them adds a warning, and the findings commit goes on as before. The session's entry records `handoff = "recorded"` or `"missing"`, so a crash never records a note twice.
 
 ## Risks
 
