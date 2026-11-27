@@ -398,13 +398,18 @@ def reviewed(tmp_path: Path, **task: Any) -> Path:
     return root
 
 
+def check_review(root: Path, **fields: Any) -> list[pipeline.Problem]:
+    """The review check, with a green driver gate report for the head (E13-T6)."""
+    return check("review", root, task=TASK, gate_report=gate_report(head(root)), **fields)
+
+
 MAJOR_OPEN = {"id": "F1", "severity": "major", "status": "open", "summary": "x.py:1 wrong"}
 
 
 @pytest.mark.ac(AC)
 def test_review_passes_after_all_six_sessions_in_round_one(tmp_path: Path) -> None:
     root = reviewed(tmp_path)
-    assert check("review", root, task=TASK, reviews=REVIEWERS) == []
+    assert check_review(root, reviews=REVIEWERS) == []
 
 
 @pytest.mark.ac(AC)
@@ -412,21 +417,21 @@ def test_review_passes_after_all_six_sessions_in_round_one(tmp_path: Path) -> No
 def test_review_fails_when_a_session_has_not_run(tmp_path: Path, missing: str) -> None:
     root = reviewed(tmp_path)
     reviews = tuple(role for role in REVIEWERS if role != missing)
-    problems = check("review", root, task=TASK, reviews=reviews)
+    problems = check_review(root, reviews=reviews)
     assert len(problems) == 1 and missing in problems[0].message
 
 
 @pytest.mark.ac(AC)
 def test_review_fails_when_the_review_round_is_not_one(tmp_path: Path) -> None:
     root = reviewed(tmp_path, review_round=0)
-    assert len(check("review", root, task=TASK, reviews=REVIEWERS)) == 1
+    assert len(check_review(root, reviews=REVIEWERS)) == 1
 
 
 @pytest.mark.ac(AC)
 @pytest.mark.parametrize("severity", ["blocker", "major"])
 def test_review_fails_on_an_open_blocker_or_major_finding(tmp_path: Path, severity: str) -> None:
     root = reviewed(tmp_path, findings=[{**MAJOR_OPEN, "severity": severity}])
-    problems = check("review", root, task=TASK, reviews=REVIEWERS)
+    problems = check_review(root, reviews=REVIEWERS)
     assert len(problems) == 1 and "F1" in problems[0].message
 
 
@@ -443,14 +448,14 @@ def test_review_passes_with_minor_or_closed_findings(
     tmp_path: Path, finding: dict[str, str]
 ) -> None:
     root = reviewed(tmp_path, findings=[finding])
-    assert check("review", root, task=TASK, reviews=REVIEWERS) == []
+    assert check_review(root, reviews=REVIEWERS) == []
 
 
 @pytest.mark.ac(AC)
 def test_review_reads_the_committed_task_file(tmp_path: Path) -> None:
     root = reviewed(tmp_path, findings=[MAJOR_OPEN])
     write(root, {TASK_REL: task_text(review_round=1)})  # fixed on disk only
-    assert check("review", root, task=TASK, reviews=REVIEWERS)
+    assert check_review(root, reviews=REVIEWERS)
 
 
 # --- docs ---------------------------------------------------------------------------------------

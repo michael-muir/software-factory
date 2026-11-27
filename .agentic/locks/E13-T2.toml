@@ -1,5 +1,5 @@
 task = "E13-T2"
-locked = 2026-11-22T03:47:35Z
+locked = 2026-11-26T19:08:53Z
 
 [[files]]
 path = "tests/_pipeline_driver.py"
@@ -7,7 +7,7 @@ sha256 = "9fd479788b41a91c65297cd827c0a4c2782f38f84552e792ec9e8b8b1994c891"
 
 [[files]]
 path = "tests/fixtures/pipeline/fake_agent.py"
-sha256 = "ac3e6be3583378c407d6b40f329f267b71edef6b5910add36629d97379e7e8ee"
+sha256 = "3c3a6d4b88632c03ab20d975f478efe6af67bb66ce3319f25dfee003009787e7"
 
 [[files]]
 path = "tests/test_pipeline_new_status.py"

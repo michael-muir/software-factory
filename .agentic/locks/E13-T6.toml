@@ -1,0 +1,6 @@
+task = "E13-T6"
+locked = 2026-11-26T21:16:26Z
+
+[[files]]
+path = "tests/test_pipeline_red_verifier.py"
+sha256 = "dfbe2791ad51a708c4f2938bd46532f612577c71b4056d384be9f752f7f36b4c"

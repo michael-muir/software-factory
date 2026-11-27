@@ -51,7 +51,7 @@ Must not:
 
 - The gate report, attached to the task's handoff.
 - A pass, or a fail with the failing checks.
-- In a pipeline session, its handoff note as its final reply. The driver records and commits it.
+- In a pipeline session, its handoff note as its final reply, ending with the line `VERDICT: pass` or `VERDICT: fail <checks>`. The driver records and commits the note, and reads the last such line as the verdict. A missing one counts as a fail.
 
 ## Hand-off
 

@@ -524,11 +524,64 @@ def _check_gate(c: Checkout) -> Found:
     return found
 
 
+def _gate_for_review(c: Checkout) -> Found:
+    """The review stage needs the driver's newest gate report to be a pass, for the head or for
+    a commit whose only later changes are under `.agentic/` (findings and handoff commits)."""
+    report = c.gate_report
+    if report is None:
+        return [(GATE, f"no gate report for {c.task}")]
+    if report.get("verdict") != "pass":
+        failed = ", ".join(failed_checks(report)) or "no check named"
+        return [(GATE, f"the newest verdict is {report.get('verdict')}: {failed}")]
+    commit = str(report.get("commit", ""))
+    try:
+        _git(c.root, "merge-base", "--is-ancestor", commit, "HEAD")
+        changed = set(_lines(_git(c.root, "diff", "--name-only", commit, "HEAD")))
+    except GitError:
+        return [(GATE, f"is for {commit[:SHORT]}, which is not on the branch")]
+    others = sorted(rel for rel in changed if not rel.startswith(".agentic/"))
+    if others:
+        return [(GATE, f"is for {commit[:SHORT]}, and {', '.join(others)} changed since")]
+    return []
+
+
+VERDICT = re.compile(r"VERDICT:[ \t]*(.*)")
+
+
+def verifier_verdict(log: Path) -> str | None:
+    """None when the last `VERDICT:` line of the session's JSON `result` is `VERDICT: pass`;
+    otherwise why the Verifier didn't pass (spec AC-13, amended 26 Nov 2026)."""
+    try:
+        text = log.read_text(encoding="utf-8", errors="replace").strip()
+    except OSError:
+        return "the verifier's log can't be read, so it gave no verdict"
+    result = None
+    for candidate in [text, *reversed(text.splitlines())]:
+        try:
+            data = json.loads(candidate)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(data, dict) and isinstance(data.get("result"), str):
+            result = data["result"]
+            break
+    if result is None:
+        return "the verifier's session has no JSON result, so it gave no verdict"
+    found = [
+        m.group(1).strip() for line in result.splitlines() if (m := VERDICT.match(line.strip()))
+    ]
+    if not found:
+        return "the verifier gave no verdict (no VERDICT: line)"
+    if found[-1].rstrip(".").lower() == "pass":
+        return None
+    return f"the verifier's verdict is {found[-1] or 'empty'}"
+
+
 def _check_review(c: Checkout) -> Found:
     rel = f".agentic/tasks/{c.task}.md"
     found: Found = [
         (rel, f"{role} has not reviewed {c.task}") for role in REVIEWERS if role not in c.reviews
     ]
+    found += _gate_for_review(c)
     text = c.show(rel)
     parsed = _state().parse(text) if text is not None else "the task file is not committed"
     if isinstance(parsed, str):
@@ -747,6 +800,13 @@ def prompt(
     else:
         lines += ["Work only in this worktree.", NO_SHELL_LAST_LINE]
     return "\n".join(lines)
+
+
+VERDICT_ASK = (
+    "End your reply, after your handoff note, with one line, `VERDICT: pass` or "
+    "`VERDICT: fail <checks>` naming the failing checks. The driver reads the last such line, "
+    "and a missing verdict counts as a fail."
+)
 
 
 # --- config (mirrors factory_installer/config_schema.py's [pipeline]) ---------------------------
@@ -1879,19 +1939,35 @@ class Driver:
         done = {s["role"] for s in sessions if s.get("exit_code") == 0}
         pending = [role for role in REVIEWERS if role not in done]
         if pending:
+            problems = _gate_for_review(self._checkout(task, run))
+            if "verifier" in done:
+                why = self._verdict(next(s for s in sessions if s["role"] == "verifier"))
+                problems += [("verifier", why)] if why else []
+            if problems:
+                return self._stop("; ".join(f"{p}: review: {m}" for p, m in problems))
             try:
                 report, _ = self._hand_report(task, run)
             except _Stop as stop:
                 return self._stop(str(stop))
             env = {"FACTORY_GATE_REPORT": str(report)}
-            return self._send(
-                current, task, pending[0], env=env, extra=[_review_line(pending[0], report)]
-            )
+            extra = [_review_line(pending[0], report)]
+            extra += [VERDICT_ASK] if pending[0] == "verifier" else []
+            return self._send(current, task, pending[0], env=env, extra=extra)
         if _review_round(root / rel) != 1 and "round" not in done:
             argv = [sys.executable, str(STATE_PATH), "task", "set", task, "--round", "1"]
             return self._command(current, task, run, "round", argv)
         self._keep_findings(root, task)
         return self._judge(current, task)
+
+    def _verdict(self, session: Mapping[str, Any]) -> str | None:
+        """Why the Verifier's finished session didn't pass; None on `VERDICT: pass`."""
+        try:
+            ran = self.runner.status(session["run"]).get("commands", [])
+        except RunnerError as exc:
+            return f"the verifier's log can't be found: {exc}"
+        n = int(session["index"])
+        log = ran[n - 1].get("log", "") if 0 < n <= len(ran) else ""
+        return verifier_verdict(Path(str(log))) if log else "the verifier's session has no log"
 
     def _reviewer_handoff(
         self, task: str, run: Mapping[str, Any], sessions: list[dict[str, Any]]

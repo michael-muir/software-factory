@@ -78,6 +78,10 @@ HANDOFFS = {
         "perf-reviewer",
     )
 }
+# the Verifier's note ends with its verdict line (E13-T6)
+HANDOFFS["verifier"] = [
+    [{"print": json.dumps({"result": HANDOFF + "\n\nVERDICT: pass", "total_cost_usd": 0.01})}]
+]
 
 
 def plan_turns(tasks: Mapping[str, str], *, revised: bool = False) -> dict[str, Any]:

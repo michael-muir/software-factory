@@ -1,5 +1,5 @@
 task = "E13-T4"
-locked = 2026-11-27T07:13:08Z
+locked = 2026-11-27T08:32:03Z
 approved_by = "michael-muir"
 
 [[files]]
@@ -8,7 +8,7 @@ sha256 = "d23bb0335708aaca09b09a2a172ed452cbcda27c5c1ffd0530ded72240c2f2cb"
 
 [[files]]
 path = "tests/test_pipeline_end_to_end.py"
-sha256 = "1bc384ec7052f350729f93e84c2677ef6346b3039ea2a07f70a547f4ce9d30a0"
+sha256 = "12bc7ecddf37e49d6bd256b6e6b8f591e11283c2cf6e8f12377e66aad85d7881"
 
 [[files]]
 path = "tests/test_pipeline_plan_commits.py"

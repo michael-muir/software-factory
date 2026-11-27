@@ -19,6 +19,7 @@ Used by: `verifier`.
 3. Read the report: `Locks` must say none changed, `Docs` must have no problems, and every check must pass or be `n/a`. For a report the driver handed you, also check that it was a full run from a clean tree: `dirty` is false, and no check was skipped as `not selected` (that's what `--checks` leaves). Its `commit` must be `HEAD`, or `git diff --stat <commit> HEAD` shows changes only under `.agentic/`.
 4. For each AC in the slice, find a passing test tagged with its id.
 5. Record the result: the verdict, the commit, and each check with its time, in the handoff and later the PR. In a pipeline session you can't commit or write a handoff file, so end with your handoff note, under its three headings, as your final reply. The driver records and commits it.
+6. In a pipeline session, end that final reply with the line `VERDICT: pass`, or `VERDICT: fail <checks>` naming the failing checks. The driver reads the last such line, and a reply without one counts as a fail.
 
 ## Done when
 
