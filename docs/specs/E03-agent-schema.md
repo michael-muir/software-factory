@@ -6,6 +6,7 @@ Status: **Approved by the product owner, 18 Nov 2026** · Next: Architect design
 ## Goal
 
 Every agent role is a plain file in one neutral format, and each role can use only the tools its file lists. The blueprint's rule "the author never grades the work" depends on this: an Implementer that can rewrite the tests that judge it is grading its own work. E03 delivers:
+
 - **`.factory/agents/_schema.md`:** the agent file format, including `model_hint` and the tool list.
 - **`.factory/agents/agents.py`:** a standard-library tool that validates agent files, decides whether a role may make a given tool call, records test locks, and acts as a Claude Code hook.
 - **Test locks:** a record of the locked test files, checked by the gate on every run.
@@ -14,12 +15,12 @@ Every agent role is a plain file in one neutral format, and each role can use on
 
 ## Decisions in force (product owner, 18 Nov 2026)
 
-| Topic | Decision |
-| --- | --- |
-| Enforcement | A **checker** in `agents.py` decides allow or deny for each tool call. E03 wires it into a **Claude Code `PreToolUse` hook**. E12 wires the same checker into Copilot and Cursor. |
-| Test locks | The Test Designer **records locked test files with their hashes** in `.agentic/locks/`. The **gate fails** if a locked file changes, and the checker **denies edits** to locked files. |
-| File format | Markdown with **TOML front matter** between `+++` lines, the same as the state files (ADR 0014). Adapters (E12) convert it to each tool's own format. |
-| Tool grain | A **neutral vocabulary**: `read`, `search`, `edit`, `write`, `run` and `web`. It has optional **scopes**: path globs for `edit` and `write`, and command prefixes for `run`. |
+| Topic       | Decision                                                                                                                                                                               |
+| ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Enforcement | A **checker** in `agents.py` decides allow or deny for each tool call. E03 wires it into a **Claude Code `PreToolUse` hook**. E12 wires the same checker into Copilot and Cursor.      |
+| Test locks  | The Test Designer **records locked test files with their hashes** in `.agentic/locks/`. The **gate fails** if a locked file changes, and the checker **denies edits** to locked files. |
+| File format | Markdown with **TOML front matter** between `+++` lines, the same as the state files (ADR 0014). Adapters (E12) convert it to each tool's own format.                                  |
+| Tool grain  | A **neutral vocabulary**: `read`, `search`, `edit`, `write`, `run` and `web`. It has optional **scopes**: path globs for `edit` and `write`, and command prefixes for `run`.           |
 
 ## In scope
 
@@ -56,20 +57,22 @@ run = ["uv run pytest", "python .factory/gates/gate.py"]   # command prefixes; d
 +++
 
 ## Scope
+
 ## Inputs
+
 ## Outputs
 ```
 
 **The tool vocabulary**
 
-| Tool | Means | Claude Code tools |
-| --- | --- | --- |
-| `read` | read a file | Read |
-| `search` | find files or text | Glob, Grep |
-| `edit` | change an existing file | Edit, MultiEdit, NotebookEdit |
-| `write` | create or replace a file | Write |
-| `run` | run a shell command | Bash, PowerShell |
-| `web` | fetch or search the web | WebFetch, WebSearch |
+| Tool     | Means                    | Claude Code tools             |
+| -------- | ------------------------ | ----------------------------- |
+| `read`   | read a file              | Read                          |
+| `search` | find files or text       | Glob, Grep                    |
+| `edit`   | change an existing file  | Edit, MultiEdit, NotebookEdit |
+| `write`  | create or replace a file | Write                         |
+| `run`    | run a shell command      | Bash, PowerShell              |
+| `web`    | fetch or search the web  | WebFetch, WebSearch           |
 
 **`.agentic/locks/<task>.toml`**, written by `agents.py lock`:
 
@@ -108,13 +111,14 @@ sha256 = "…"                      # of the LF-normalised content (ADR 0004)
   - a `run` command doesn't start with one of the `[scope].run` prefixes, matched on whole words
 
   An unknown role, or invalid agent files, exits 2. `*` matches within one path segment and `**` matches any depth.
+
 - **AC-06** **Claude Code hook:** `agents.py hook claude-code` reads Claude Code's `PreToolUse` JSON from stdin, maps the tool name with the table above, and applies AC-05 for the role named by the `FACTORY_ROLE` environment variable. It exits 0 to allow. It exits 2 to block, with the reason on stderr (Claude Code's blocking convention). A tool name that isn't in the table is denied whenever a role is set.
 - **AC-07** **No role set:** when `FACTORY_ROLE` is unset or empty, tool lists don't apply, but edits and writes to locked files are still denied.
 - **AC-08** **Fails closed:** malformed hook input, an unknown role, or invalid agent files block the call with a message, and never allow it.
 
 **Test locks**
 
-- **AC-09** `agents.py lock <task> <path>...` writes `.agentic/locks/<task>.toml` with each file's SHA-256, taken after normalising line endings (ADR 0004). `<task>` must have an E02 task file, and every path must be an existing file in the repo. It refuses to replace an existing lock unless `--replace` is given. `agents.py unlock <task>` removes the record. Both write atomically.
+- **AC-09** `agents.py lock <task> <path>...` writes `.agentic/locks/<task>.toml` with each file's SHA-256, taken after normalising line endings (ADR 0004). `<task>` must have an E02 task file, and every path must be an existing file in the repo. It refuses to replace an existing lock unless `--replace` is given. `agents.py unlock <task>` removes the record. Both write atomically. (Amended 26 Nov 2026.) `--approved-by NAME`, optional, writes `approved_by = "<NAME>"` into the record, to say who approved a relock, and a blank name is refused. `approved_by` is an optional key of a lock record, a non-empty string, and a record without it stays valid.
 - **AC-10** **The gate checks locks** on every run, including `--checks` runs and therefore the pre-commit hook. If a locked file is changed or missing, the gate prints `<path>: locked by <task>: changed` (or `missing`) for each one, fails with exit 1, and runs no other checks.
 - **AC-11** Lock records are validated by AC-03: exact keys and types, a 64-hex `sha256`, a task file that exists, and no path locked by two tasks.
 
@@ -138,3 +142,4 @@ sha256 = "…"                      # of the LF-normalised content (ADR 0004)
 ## Changes
 
 - **20 Nov 2026, approved by the product owner (E12 PR #68):** the Claude Code hook maps the `PowerShell` tool, Claude Code's shell on Windows, to `run`, as it maps `Bash`. E12's Claude Code agent files list both for a role with `run`. A `run` scope's shell control check also treats PowerShell syntax as control: `$`, `(`, `)`, `@` at the start of a word, and line or paragraph separators, beside `;`, `&`, `|`, `` ` ``, `>`, `<` and newlines.
+- **26 Nov 2026, approved by the product owner (#109, E13-T8):** `agents.py lock` gains `--approved-by NAME`, which writes `approved_by` into the lock record, so a relock names who approved it. `agents.py check` accepts `approved_by` as an optional non-empty string (AC-09, AC-11). The flag is optional, and records without the key stay valid. E13's pipeline uses it to carry out a relock the product owner approved (E13 AC-23, ADR 0047).

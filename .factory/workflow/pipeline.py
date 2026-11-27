@@ -1282,7 +1282,7 @@ E18_STATUS = {
 # --- the driver (ADR 0041) ----------------------------------------------------------------------
 
 STOP_OK, STOP_HUMAN, GO = 0, 1, -1
-DRIVER_ROLES = ("gate", "commit", "round", "push")  # commands the driver sends itself
+DRIVER_ROLES = ("gate", "commit", "round", "push", "relock", "finding")  # the driver's own
 SCRATCH = "factory-pipeline"  # in the runner worktree's own git dir: never tracked or dirty
 
 
@@ -1335,6 +1335,10 @@ class Driver:
         if outstanding is not None:
             return self._collect(outstanding)
         sessions = self._sessions(current.name, task)
+        relock = self._relock(current, task, sessions)
+        if relock is not None:
+            return relock
+        sessions = [s for s in sessions if not s.get("relock")]
         plan = SLICE_PLANS.get(current.name)
         if plan is None:
             left = self._leftovers(current, task, sessions)
@@ -1751,8 +1755,23 @@ class Driver:
     def _gate(
         self, current: Stage, task: str, run: dict[str, Any], sessions: list[dict[str, Any]]
     ) -> int:
-        """Gate, then the Debugger and the gate again on red, up to `gate_retries` times."""
-        if not sessions or sessions[-1]["role"] != "gate":
+        """Gate, then the Debugger and the gate again on red, up to `gate_retries` times. A new
+        open blocker finding after a Debugger session stops for a human (ADR 0047)."""
+        last = sessions[-1]["role"] if sessions else ""
+        if last in ("debugger", "commit"):
+            asked = self._new_blockers(task, run)
+            if asked:
+                rel = f".agentic/tasks/{task}.md"
+                if last == "debugger" and _dirty(Path(run["worktree"]), rel):
+                    argv = self._commit_argv(
+                        f"chore({task}): the debugger's blocker findings", [rel]
+                    )
+                    return self._command(current, task, run, "commit", argv)
+                debugger = [s for s in sessions if s["role"] == "debugger"][-1]
+                debugger["blockers"] = [str(f.get("id")) for f in asked]
+                listed = "; ".join(f"{f.get('id')} [blocker] {f.get('summary')}" for f in asked)
+                return self._stop(f"gate: the debugger needs a human: {listed}")
+        if last != "gate":
             return self._gate_command(current, task, run)
         latest = self._latest_gate(task)
         if latest is not None and latest.get("verdict") == "pass":
@@ -1773,6 +1792,67 @@ class Driver:
         )
         env = {"FACTORY_GATE_REPORT": str(path)}
         return self._send(current, task, "debugger", env=env, extra=[line])
+
+    def _new_blockers(self, task: str, run: Mapping[str, Any]) -> list[dict[str, Any]]:
+        """Open blocker findings in the worktree's task file that the gated commit didn't have."""
+        rel = f".agentic/tasks/{task}.md"
+        try:
+            after = (Path(run["worktree"]) / rel).read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            return []
+        latest = self._latest_gate(task)
+        before = ""
+        if latest is not None and latest.get("commit"):
+            try:
+                before = _git(Path(run["worktree"]), "show", f"{latest['commit']}:{rel}")
+            except GitError:
+                before = ""
+        known = {f.get("id") for f in _open_blockers(before)}
+        return [f for f in _open_blockers(after) if f.get("id") not in known]
+
+    # -- a relock the product owner approved (spec AC-23, ADR 0047)
+
+    def _relock_decision(self, task: str) -> dict[str, Any] | None:
+        for decision in reversed(self.rec["decisions"]):
+            if decision.get("attempt") == self._attempt() and decision.get("task", task) == task:
+                return decision if decision.get("checkpoint") == "relock" else None
+        return None
+
+    def _relock(self, current: Stage, task: str, sessions: list[dict[str, Any]]) -> int | None:
+        """Carry out an approved relock before the stopped stage reruns: check that only the
+        approved files' hashes changed, `agents.py lock --replace` every locked file plus the
+        approved ones, mark the Debugger's blocker findings fixed, and commit. None once done,
+        or when no relock was approved for this attempt."""
+        decision = None if current.scope != "slice" else self._relock_decision(task)
+        if decision is None:
+            return None
+        steps = {str(s["relock"]) for s in sessions if s.get("relock") and s.get("exit_code") == 0}
+        if "commit" in steps:
+            return None
+        try:
+            run = self._open_run(task) or self._new_run(current, task)
+        except _Stop as stop:
+            return self._stop(str(stop))
+        root = Path(run["worktree"])
+        lock_task, by = str(decision["lock_task"]), str(decision["by"])
+        rel = _lock_rel(lock_task)
+        if "lock" not in steps:
+            try:
+                files = _relock_files(root, lock_task, [str(f) for f in decision["files"]])
+            except _Stop as stop:
+                return self._stop(f"relock: {stop}")
+            argv = [sys.executable, str(AGENTS_PATH), "lock", "--replace", lock_task, *files]
+            argv += ["--approved-by", by]
+            return self._command(current, task, run, "relock", argv, relock="lock")
+        findings = [str(f) for f in decision.get("findings", [])]
+        for fid in findings:
+            if f"finding:{fid}" not in steps:
+                argv = [sys.executable, str(STATE_PATH), "finding", "set", task, fid]
+                argv += ["--status", "fixed"]
+                return self._command(current, task, run, "finding", argv, relock=f"finding:{fid}")
+        paths = [rel, *([f".agentic/tasks/{task}.md"] if findings else [])]
+        argv = self._commit_argv(f"test({lock_task}): relock approved by {by}", paths)
+        return self._command(current, task, run, "commit", argv, relock="commit")
 
     def _review(
         self, current: Stage, task: str, run: dict[str, Any], sessions: list[dict[str, Any]]
@@ -2047,6 +2127,59 @@ SLICE_PLANS: dict[str, Callable[..., int]] = {
 SUMMARY_TABLES = ("stages", "gates", "findings", "prs")
 
 
+def _open_blockers(text: str) -> list[dict[str, Any]]:
+    """The open blocker findings in a task file's text; none when it doesn't parse."""
+    parsed = _state().parse(text) if text else "empty"
+    findings = [] if isinstance(parsed, str) else parsed[0].get("findings", [])
+    return [
+        dict(f)
+        for f in (findings if isinstance(findings, list) else [])
+        if isinstance(f, dict) and f.get("status") == "open" and f.get("severity") == "blocker"
+    ]
+
+
+def _locked_files(text: str) -> dict[str, str]:
+    """A lock record's files and their hashes, in the record's order."""
+    try:
+        data = tomllib.loads(text)
+    except tomllib.TOMLDecodeError as exc:
+        raise _Stop(f"the lock record is not valid TOML: {exc}") from None
+    files = data.get("files", [])
+    return {
+        str(f.get("path")): str(f.get("sha256"))
+        for f in (files if isinstance(files, list) else [])
+        if isinstance(f, dict)
+    }
+
+
+def _changed_locked(read: Callable[[str], bytes | None], locked: Mapping[str, str]) -> list[str]:
+    """The locked files whose hash no longer matches (or that are gone); `read(rel)` gives a
+    file's bytes, or None."""
+    sha = _agents().lf_sha256
+    return [rel for rel, want in locked.items() if (data := read(rel)) is None or sha(data) != want]
+
+
+def _relock_files(root: Path, lock_task: str, approved: Sequence[str]) -> list[str]:
+    """Every file in the committed lock record, then the approved files it doesn't hold. Stops
+    when a file that isn't approved has a new hash in the worktree."""
+    try:
+        text = _git(root, "show", f"HEAD:{_lock_rel(lock_task)}")
+    except GitError:
+        raise _Stop(f"{_lock_rel(lock_task)} is not committed") from None
+    locked = _locked_files(text)
+
+    def read(rel: str) -> bytes | None:
+        try:
+            return (root / rel).read_bytes()
+        except OSError:
+            return None
+
+    others = [rel for rel in _changed_locked(read, locked) if rel not in approved]
+    if others:
+        raise _Stop(f"{', '.join(others)} changed but the relock didn't approve it")
+    return [*locked, *(rel for rel in approved if rel not in locked)]
+
+
 def dict_of(entry: Any) -> dict[str, Any]:
     """A record table entry, as the mutable dict it is."""
     assert isinstance(entry, dict)
@@ -2255,7 +2388,83 @@ def _approve(job: Job, checkpoint: str, by: str) -> None:
     commit_file(job.root, branch, rel, new, f"docs({epic}): {kind} {verb} by {by}")
 
 
+def _approve_relock(args: argparse.Namespace) -> int:
+    """`approve <job> relock --task <id> --by NAME [--files f...]` (spec AC-23, ADR 0047)."""
+    if not args.task or not TASK_ID.fullmatch(args.task):
+        raise BadInput("approve relock needs --task, the task whose lock is relocked")
+    files = [Path(f).as_posix() for f in args.files or []]
+    here = _toplevel(Path.cwd())
+    with Job(here, args.job, _session_id(args.session)) as job:
+        rec = job.record
+        if rec["status"] != "needs-human":
+            raise Refused(f"job {args.job} is {rec['status']}, not needs-human")
+        if stage(rec["stage"]).scope != "slice":
+            raise Refused(f"a relock is for a slice stage, and the job is at {rec['stage']}")
+        task = str(rec["task"])
+        runs = [r for r in rec["runs"] if r.get("task") == task]
+        if not runs:
+            raise Refused(f"no runner job has worked on {task} yet")
+        branch = str(runs[-1]["branch"])
+        rel = _lock_rel(args.task)
+        try:
+            locked = _locked_files(_git(job.root, "show", f"{branch}:{rel}"))
+        except GitError:
+            raise Refused(f"{branch} has no lock record for {args.task} ({rel})") from None
+        except _Stop as stop:
+            raise Refused(f"{branch}: {rel}: {stop}") from None
+
+        def read(path: str) -> bytes | None:
+            try:
+                return _git(job.root, "show", f"{branch}:{path}").encode("utf-8")
+            except GitError:
+                return None
+
+        changed = _changed_locked(read, locked)
+        if not files and not changed:
+            raise Refused(f"nothing to relock: every file in {rel} on {branch} still matches")
+        files = files or changed
+        missing = [f for f in files if read(f) is None]
+        if missing:
+            raise Refused(f"{', '.join(missing)} is not on {branch}")
+        others = [f for f in changed if f not in files]
+        if others:
+            raise Refused(f"{', '.join(others)} changed on {branch} too; approve it with --files")
+        attempt = int(rec.get("attempt", 1))
+        debugger = [
+            s
+            for s in rec["sessions"]
+            if s.get("role") == "debugger"
+            and s.get("task") == task
+            and s.get("attempt", 1) == attempt
+        ]
+        findings = [str(f) for f in (debugger[-1].get("blockers", []) if debugger else [])]
+        rec["attempt"] = attempt + 1
+        rec["decisions"].append(
+            {
+                "checkpoint": "relock",
+                "verdict": "approve",
+                "by": args.by,
+                "at": _now(),
+                "note": args.note or "",
+                "task": task,
+                "attempt": attempt + 1,
+                "lock_task": args.task,
+                "files": files,
+                "findings": findings,
+            }
+        )
+        if rec["sessions"] and "exit_code" not in rec["sessions"][-1]:
+            rec["sessions"][-1]["exit_code"] = -1
+        rec["status"], rec["reason"] = "ready", ""
+        job.save()
+        Driver(job, runner_for(job.root))._sync_e18()
+    print(f"{args.job}: relock of {args.task} approved by {args.by}: {', '.join(files)}")
+    return 0
+
+
 def _decide(args: argparse.Namespace, verdict: str) -> int:
+    if args.checkpoint == "relock" and verdict == "approve":
+        return _approve_relock(args)
     if args.checkpoint not in CHECKPOINTS:
         raise BadInput(f"unknown checkpoint {args.checkpoint!r}; one of {', '.join(CHECKPOINTS)}")
     here = _toplevel(Path.cwd())
@@ -2719,9 +2928,15 @@ def _parser() -> argparse.ArgumentParser:
     for verdict in ("approve", "reject"):
         sub = commands.add_parser(verdict, help=f"{verdict} the checkpoint the job waits at")
         sub.add_argument("job")
-        sub.add_argument("checkpoint", help="spec, design or merge")
+        names = "spec, design, merge or relock" if verdict == "approve" else "spec, design or merge"
+        sub.add_argument("checkpoint", help=names)
         sub.add_argument("--by", required=True, help="who decides")
         sub.add_argument("--note", required=verdict == "reject", help="for the role's next try")
+        if verdict == "approve":
+            sub.add_argument("--task", help="relock: the task whose lock record is relocked")
+            sub.add_argument(
+                "--files", nargs="+", help="relock: the approved files (default: those changed)"
+            )
         sub.add_argument("--session", help="the session id")
         sub.set_defaults(func=lambda a, v=verdict: _decide(a, v))
 

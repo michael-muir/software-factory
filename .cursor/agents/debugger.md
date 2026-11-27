@@ -14,6 +14,7 @@ Does:
 - Reproduce the failure, then narrow it down: one hypothesis and one experiment at a time.
 - Find the root cause, and fix that rather than the symptom.
 - Add a regression test when the cause wasn't covered.
+- If the fix needs a relock or a human's decision, record a blocker finding saying what, and stop.
 
 Must not:
 
