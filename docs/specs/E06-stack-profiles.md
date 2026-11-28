@@ -110,7 +110,7 @@ Give the E05 gate real work to do. Two profiles, Python and TS/JS, turn the gate
   - an untested function that pulls coverage under 80% (coverage)
   - weak assertions that pull the mutation score under 60% (mutation)
 
-  For each variant, the gate exits 1, that check fails, and every other check passes or is n/a.
+  For each variant, the gate exits 1, that check fails, and every other check passes or is n/a, with one exception: the **tests** variant also fails mutation, because the kill test fails before any mutation, so no mutant can be scored. *(Changes, 28 Nov 2026; see Changes.)*
 - **AC-11** `tests/fixtures/ts-js-ref/` is a small Vitest project with a committed `package-lock.json`. Installed with `npm ci`, it passes every TS/JS check, and the gate exits 0.
 - **AC-12** Each TS/JS check has a seeded-bug variant: format, lint, types, build, tests, coverage and mutation. Every variant breaks its own check and nothing else, with two exceptions:
   - The **tests** variant also fails coverage and mutation, because both need a green test suite: the coverage check reruns the tests, and Stryker refuses to start when its initial test run fails.
@@ -126,6 +126,10 @@ Give the E05 gate real work to do. Two profiles, Python and TS/JS, turn the gate
 **Quality**
 
 - **AC-15** ruff, `ruff format --check` and `mypy --strict` pass on both helpers. Every AC above has at least one test tagged `E06-AC-nn`.
+
+## Changes
+
+- **28 Nov 2026, by the product owner, after the live run (#120; AC-10):** `mutate_python.py` runs the kill test once on its copy before mutating. When it failed in the copy and in the project, the helper exited 0 and left the failure to the `tests` check. In the live run on #82, on the product owner's Windows machine, the `tests` check passed but the kill test failed, so mutation passed with no mutant scored, and the helper threw away pytest's output, so nobody could tell which test failed. Now a kill test that fails before any mutation is a mutation failure: the helper exits 1, whatever the `tests` check says, and prints the last 30 lines of pytest's output, its short test summary included, so the failing test is named. A kill test that passes in the project but fails in the copy is still an environment error (exit 2). So AC-10's **tests** variant fails mutation too. PO-approved under the standing approval of 26 Nov 2026. Built in E13-T11.
 
 ## Assumptions (confirmed with approval, 17 Nov 2026)
 
