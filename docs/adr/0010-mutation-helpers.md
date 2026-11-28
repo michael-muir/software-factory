@@ -42,3 +42,7 @@ The gate's model is exit codes only (E05). Neither cosmic-ray nor Stryker exits 
 - **The copy is proven before it is trusted.** The helper runs the kill test once on the copy before any mutation. A copy missing something the tests need would fail every test run, count every mutant as killed, and fake a perfect score. This costs one extra test run per mutation check. When the copy's tests fail, the helper runs them once in the project too:
   - **Both fail:** the tests really are red. Mutation isn't scored and exits 0, and the `tests` check fails the gate, so a red suite still breaks one check only (E06 AC-10).
   - **Only the copy fails:** the copy is broken. The helper exits 2, an environment error, and never passes.
+
+## Amendment (product owner, 28 Nov 2026, #120)
+
+- **A kill test that fails before any mutation fails mutation.** The "both fail" case above exited 0 and left the failure to the `tests` check. In the live run on #82, on the product owner's Windows machine, the `tests` check passed while the kill test failed, so mutation passed with no mutant scored, and the helper had thrown pytest's output away. Now `mutate_python.py` exits 1 in that case, whatever the `tests` check says, and prints the last 30 lines of pytest's output, its short test summary included, so the failing test is named. A red suite now fails the `tests` and `mutation` checks (E06 AC-10, amended). The "only the copy fails" case is unchanged: exit 2.
