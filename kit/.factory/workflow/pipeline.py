@@ -524,9 +524,12 @@ def _check_gate(c: Checkout) -> Found:
     return found
 
 
-def _gate_for_review(c: Checkout) -> Found:
+def _gate_for_review(c: Checkout, *, allow_added_tests: bool = False) -> Found:
     """The review stage needs the driver's newest gate report to be a pass, for the head or for
-    a commit whose only later changes are under `.agentic/` (findings and handoff commits)."""
+    a commit whose only later changes are under `.agentic/` (findings and handoff commits).
+    With `allow_added_tests`, files added under `tests/` pass too: the Adversary's attack tests,
+    which the docs stage gates on the new head (spec AC-13, amended 27 Nov 2026). Renames count
+    as a delete and an add, so a renamed file still needs a fresh gate."""
     report = c.gate_report
     if report is None:
         return [(GATE, f"no gate report for {c.task}")]
@@ -536,10 +539,16 @@ def _gate_for_review(c: Checkout) -> Found:
     commit = str(report.get("commit", ""))
     try:
         _git(c.root, "merge-base", "--is-ancestor", commit, "HEAD")
-        changed = set(_lines(_git(c.root, "diff", "--name-only", commit, "HEAD")))
+        diff = ["diff", "--name-only", "--no-renames", commit, "HEAD"]
+        changed = set(_lines(_git(c.root, *diff)))
+        added = set(_lines(_git(c.root, *diff, "--diff-filter=A"))) if allow_added_tests else set()
     except GitError:
         return [(GATE, f"is for {commit[:SHORT]}, which is not on the branch")]
-    others = sorted(rel for rel in changed if not rel.startswith(".agentic/"))
+    others = sorted(
+        rel
+        for rel in changed
+        if not rel.startswith(".agentic/") and not (rel in added and rel.startswith("tests/"))
+    )
     if others:
         return [(GATE, f"is for {commit[:SHORT]}, and {', '.join(others)} changed since")]
     return []
@@ -581,7 +590,7 @@ def _check_review(c: Checkout) -> Found:
     found: Found = [
         (rel, f"{role} has not reviewed {c.task}") for role in REVIEWERS if role not in c.reviews
     ]
-    found += _gate_for_review(c)
+    found += _gate_for_review(c, allow_added_tests=True)
     text = c.show(rel)
     parsed = _state().parse(text) if text is not None else "the task file is not committed"
     if isinstance(parsed, str):
@@ -752,6 +761,11 @@ def session_env(role: str, **more: str) -> dict[str, str]:
     return {"FACTORY_ROLE": role, **more}
 
 
+NO_SHELL_HEADINGS = (
+    "Write your handoff note under these exact headings, in this order: "
+    + ", ".join(f"`{h}`" for h in HANDOFF_HEADINGS)
+    + "."
+)
 NO_SHELL_LAST_LINE = (
     "Don't commit: the driver commits your files. End with your handoff note as your final "
     "reply, and stop."
@@ -798,7 +812,7 @@ def prompt(
     if shell:
         lines.append("Work only in this worktree. Commit your work and stop.")
     else:
-        lines += ["Work only in this worktree.", NO_SHELL_LAST_LINE]
+        lines += ["Work only in this worktree.", NO_SHELL_HEADINGS, NO_SHELL_LAST_LINE]
     return "\n".join(lines)
 
 
