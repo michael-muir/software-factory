@@ -1954,6 +1954,8 @@ class Driver:
         pending = [role for role in REVIEWERS if role not in done]
         if pending:
             problems = _gate_for_review(self._checkout(task, run))
+            if problems and self._regate_due(task, run, sessions):
+                return self._gate_command(current, task, run)
             if "verifier" in done:
                 why = self._verdict(next(s for s in sessions if s["role"] == "verifier"))
                 problems += [("verifier", why)] if why else []
@@ -1972,6 +1974,25 @@ class Driver:
             return self._command(current, task, run, "round", argv)
         self._keep_findings(root, task)
         return self._judge(current, task)
+
+    def _regate_due(
+        self, task: str, run: Mapping[str, Any], sessions: list[dict[str, Any]]
+    ) -> bool:
+        """Whether review should run the full gate again before its first reviewer (spec
+        AC-13, amended 28 Nov 2026): no reviewer and no gate has run in this attempt, and the
+        newest gate report is a pass for a commit on the branch that the head has moved past.
+        Once per attempt, so a head that still differs after it stops the job."""
+        if any(s["role"] in REVIEWERS or s["role"] == "gate" for s in sessions):
+            return False
+        latest = self._latest_gate(task)
+        if latest is None or latest.get("verdict") != "pass":
+            return False
+        root = Path(str(run["worktree"]))
+        try:
+            _git(root, "merge-base", "--is-ancestor", str(latest.get("commit", "")), "HEAD")
+        except GitError:
+            return False
+        return True
 
     def _verdict(self, session: Mapping[str, Any]) -> str | None:
         """Why the Verifier's finished session didn't pass; None on `VERDICT: pass`."""
