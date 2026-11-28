@@ -1,6 +1,7 @@
 task = "REVIEW-T2"
-locked = 2026-11-19T07:57:25Z
+locked = 2026-11-28T12:08:47Z
+approved_by = "michael-muir"
 
 [[files]]
 path = "tests/test_gate_robustness.py"
-sha256 = "dd53621deac20ea0cbbca6effd4ca5188ef2dc65398c93b0b27d4154a2ff0afa"
+sha256 = "2cb56b097fd9f81c80630d9b4b4fedc2c289755b2705122b71eabfacc25d93ed"

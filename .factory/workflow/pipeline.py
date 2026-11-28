@@ -1954,7 +1954,7 @@ class Driver:
         pending = [role for role in REVIEWERS if role not in done]
         if pending:
             problems = _gate_for_review(self._checkout(task, run))
-            if problems and self._regate_due(task, run, sessions):
+            if self._regate_due(task, run, sessions, stale=bool(problems)):
                 return self._gate_command(current, task, run)
             if "verifier" in done:
                 why = self._verdict(next(s for s in sessions if s["role"] == "verifier"))
@@ -1976,13 +1976,19 @@ class Driver:
         return self._judge(current, task)
 
     def _regate_due(
-        self, task: str, run: Mapping[str, Any], sessions: list[dict[str, Any]]
+        self, task: str, run: Mapping[str, Any], sessions: list[dict[str, Any]], *, stale: bool
     ) -> bool:
         """Whether review should run the full gate again before its first reviewer (spec
-        AC-13, amended 28 Nov 2026): no reviewer and no gate has run in this attempt, and the
-        newest gate report is a pass for a commit on the branch that the head has moved past.
-        Once per attempt, so a head that still differs after it stops the job."""
+        AC-13, amended 28 Nov 2026): no reviewer and no gate has run in this attempt, and
+        either the previous attempt at review ended red (#120, #119), or the gate check is
+        `stale` and the newest gate report is a pass for a commit on the branch that the head
+        has moved past (#117). Once per attempt, so a head that still differs after it, or a
+        red gate, stops the job."""
         if any(s["role"] in REVIEWERS or s["role"] == "gate" for s in sessions):
+            return False
+        if self._review_ended_red(task):
+            return True
+        if not stale:
             return False
         latest = self._latest_gate(task)
         if latest is None or latest.get("verdict") != "pass":
@@ -1993,6 +1999,32 @@ class Driver:
         except GitError:
             return False
         return True
+
+    def _review_ended_red(self, task: str) -> bool:
+        """Whether the newest earlier attempt at review for the task ended red: a gate in it
+        that wasn't a pass, or a Verifier that failed, gave no verdict or didn't finish."""
+        earlier = [
+            s
+            for s in self.rec["sessions"]
+            if s.get("stage") == "review"
+            and s.get("task") == task
+            and int(s.get("attempt", 1)) < self._attempt()
+        ]
+        if not earlier:
+            return False
+        last = max(int(s.get("attempt", 1)) for s in earlier)
+        previous = [s for s in earlier if int(s.get("attempt", 1)) == last]
+        verdicts = {
+            (str(g.get("run")), str(g.get("index"))): g.get("verdict") for g in self.rec["gates"]
+        }
+        gates = [s for s in previous if s["role"] == "gate"]
+        if any(verdicts.get((str(s.get("run")), str(s.get("index")))) != "pass" for s in gates):
+            return True
+        verifiers = [s for s in previous if s["role"] == "verifier"]
+        if verifiers:
+            verifier = verifiers[-1]
+            return verifier.get("exit_code") != 0 or self._verdict(verifier) is not None
+        return False
 
     def _verdict(self, session: Mapping[str, Any]) -> str | None:
         """Why the Verifier's finished session didn't pass; None on `VERDICT: pass`."""

@@ -328,4 +328,6 @@ def test_each_python_seed_fails_exactly_its_check(tmp_path: Path, check: str) ->
     assert code == 1, report
     result = statuses(report)
     expected = {c: ("n/a" if c == "build" else "pass") for c in CHECKS} | {check: "fail"}
+    if check == "tests":  # the kill test fails before any mutation (E06 AC-10, 28 Nov 2026)
+        expected["mutation"] = "fail"
     assert result == expected, json.dumps(report, indent=2)

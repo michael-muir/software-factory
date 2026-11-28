@@ -183,10 +183,12 @@ def test_a_red_gate_again_at_review_stops_the_job_and_no_reviewer_runs(
 def test_no_gate_again_when_the_head_differs_only_under_agentic(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    note = {".agentic/notes/verifier.md": "The tests step failed.\n"}
-    red_turn = [*change(note, "chore(E31-T1): verifier notes"), reply("VERDICT: fail tests")]
-    root, log, record = first_attempt(tmp_path, monkeypatch, capsys, {"verifier": [red_turn, []]})
-    assert "verdict" in record["reason"]
+    # The first attempt doesn't end red (E13-T11): the Verifier passes, then a reviewer quits.
+    note = {".agentic/notes/verifier.md": "The tests step passed.\n"}
+    green_turn = [*change(note, "chore(E31-T1): verifier notes"), reply("VERDICT: pass")]
+    reviews = {"verifier": [green_turn, []], "spec-reviewer": [[{"exit": 1}], []]}
+    root, log, record = first_attempt(tmp_path, monkeypatch, capsys, reviews)
+    assert "spec-reviewer" in record["reason"]
     assert len(gate_calls(tmp_path)) == 1
 
     code = resume(root, monkeypatch, capsys)

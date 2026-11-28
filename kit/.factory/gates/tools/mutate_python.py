@@ -146,8 +146,24 @@ def project_copy(root: Path, dest: Path) -> None:
             shutil.copy2(source, dest / rel)
 
 
+TAIL_LINES = 30
+
+
+def kill_test(command: Sequence[str], cwd: Path) -> tuple[bool, str]:
+    """Run the kill test once: whether it passed, and its output (stdout, then stderr)."""
+    done = subprocess.run(
+        list(command), cwd=cwd, capture_output=True, text=True, errors="replace", check=False
+    )
+    return done.returncode == 0, done.stdout + done.stderr
+
+
 def tests_pass(command: Sequence[str], cwd: Path) -> bool:
-    return subprocess.run(list(command), cwd=cwd, capture_output=True, check=False).returncode == 0
+    return kill_test(command, cwd)[0]
+
+
+def tail(output: str, n: int = TAIL_LINES) -> str:
+    """The last `n` lines of pytest's output, where its short test summary is."""
+    return "\n".join(output.rstrip().splitlines()[-n:])
 
 
 def _require(module: str, name: str) -> None:
@@ -254,14 +270,19 @@ def run(
         )
         command = test_command(sys.executable, settings.test_args)
         project_copy(root, copy)
-        if not tests_pass(command, copy):
-            if tests_pass(command, root):
+        passed, _ = kill_test(command, copy)
+        if not passed:
+            passed, output = kill_test(command, root)
+            if passed:
                 raise HelperError(
                     "the tests pass in the project but fail in the copy that mutation runs in; "
                     "do they need a git-ignored file or the git history?"
                 )
-            print("the tests fail without any mutation, so mutants can't be scored")
-            return 0  # the tests check reports the failure (E06 AC-10)
+            # A mutation failure, whatever the tests check says (E06 AC-10, 28 Nov 2026).
+            print(f"kill test: {shlex.join(['python', *command[1:]])}")
+            print("the kill test fails before any mutation, so no mutant can be scored")
+            print(tail(output))
+            return 1
         _write_config(config, sources, command)
         _cosmic_ray("init", str(config), str(session), cwd=copy)
 
