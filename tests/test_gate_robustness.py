@@ -215,15 +215,15 @@ def test_cosmic_ray_runs_in_a_copy_not_the_repo(
     assert not fake.cwds[0].exists(), "the copy is removed afterwards"
 
 
-def test_red_tests_are_not_scored_and_not_failed_twice(
+def test_red_tests_are_not_scored_and_fail_mutation(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """Red tests fail the tests check; mutation must not fail too (E06 AC-10), nor score them."""
+    """Red tests are never scored, and fail mutation too (E06 AC-10, amended 28 Nov 2026)."""
     root = project(tmp_path, test_body="    assert add(2, 3) == 6\n")
     fake = FakeCosmicRay()
     monkeypatch.setattr(mutate_python, "_cosmic_ray", fake)
-    assert mutate_python.run(root, ["calc.py"], 60.0) == 0
-    assert "fail without any mutation" in capsys.readouterr().out
+    assert mutate_python.run(root, ["calc.py"], 60.0) == 1
+    assert "fails before any mutation" in capsys.readouterr().out
     assert fake.cwds == []
 
 
